@@ -9,7 +9,7 @@ ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
 
 # Inserisci qui le categorie ESATTE come appaiono in cat1
 ALLOWED_CATEGORIES = {
-    "Auto, Moto E Nautica",
+    "Informatica",
     # "Altra Categoria",
 }
 
