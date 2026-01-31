@@ -20,7 +20,8 @@ jobs:
           python filter_feed.py
 
       - name: Upload filtered CSV
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: filtered-feed
           path: filtered.csv
+          if-no-files-found: error
