@@ -1,0 +1,26 @@
+name: Build filtered CSV feed
+
+on:
+  schedule:
+    - cron: "0 5 * * *"   # ogni giorno alle 05:00
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download source CSV
+        run: |
+          curl -L "${{ secrets.SOURCE_CSV_URL }}" -o source.csv
+
+      - name: Filter CSV
+        run: |
+          python filter_feed.py
+
+      - name: Upload filtered CSV
+        uses: actions/upload-artifact@v3
+        with:
+          name: filtered-feed
+          path: filtered.csv
