@@ -1,29 +1,38 @@
 import csv
 import re
+from typing import Dict, List, Tuple
 
 SOURCE_FILE = "source.csv"
 OUTPUT_FILE = "filtered.csv"
 
-MIN_QTY = 10  # quantità >= 10
+# Filtri richiesti
+MIN_QTY = 10  # quantita >= 10
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
+ALLOWED_CATEGORIES = {"Informatica"}  # match esatto (trim), case-sensitive
 
-# Inserisci qui le categorie ESATTE come appaiono in cat1
-ALLOWED_CATEGORIES = {
-    "Informatica",
-    # "Altra Categoria",
-}
-
+# SKU formato atteso: S_0373_ABC..., T_0380_5854285, ecc.
 SUPPLIER_RE = re.compile(r"^[A-Za-z]+_(\d{4})_")
 
 def detect_delimiter(header_line: str) -> str:
-    # Priorità: tab se presente, altrimenti pipe, altrimenti virgola
+    """Auto-detect: tab -> pipe -> comma."""
     if "\t" in header_line:
         return "\t"
     if "|" in header_line:
         return "|"
     return ","
 
-def parse_int(x, default=0):
+def normalize_fieldnames(fieldnames: List[str]) -> List[str]:
+    """Rimuove BOM e spazi; mantiene i nomi originali salvo pulizia minima."""
+    out = []
+    for fn in fieldnames:
+        s = (fn or "")
+        # BOM UTF-8 inizio file (es: '\ufeffcat1')
+        s = s.lstrip("\ufeff")
+        s = s.strip()
+        out.append(s)
+    return out
+
+def parse_int(x, default=0) -> int:
     try:
         return int(str(x or "").strip())
     except Exception:
@@ -34,54 +43,81 @@ def extract_supplier(sku: str) -> str:
     m = SUPPLIER_RE.match(s)
     return m.group(1) if m else ""
 
-with open(SOURCE_FILE, "r", encoding="utf-8", newline="") as fin:
-    first_line = fin.readline()
-    if not first_line:
-        raise RuntimeError("Empty source file")
+def open_text(path: str):
+    # utf-8-sig rimuove BOM dal testo in modo naturale; comunque normalizziamo header anche dopo
+    return open(path, "r", encoding="utf-8-sig", newline="")
 
-    delimiter = detect_delimiter(first_line)
-
-    # Riavvolgi e usa DictReader
-    fin.seek(0)
-    reader = csv.DictReader(fin, delimiter=delimiter)
-
-    # Verifiche colonne
-    needed = {"sku", "cat1"}
-    missing = needed - set(reader.fieldnames or [])
+def require_columns(fieldnames: List[str], required: List[str]) -> None:
+    missing = [c for c in required if c not in fieldnames]
     if missing:
-        raise RuntimeError(f"Missing columns: {sorted(missing)}. Found: {reader.fieldnames}")
+        raise RuntimeError(f"Missing columns: {missing}. Found: {fieldnames}")
 
-    # quantita può chiamarsi "quantita" (come nel tuo Apps Script) o altro: lo gestiamo flessibile
-    qty_col_candidates = ["quantita", "qty", "quantity"]
-    qty_col = next((c for c in qty_col_candidates if c in (reader.fieldnames or [])), None)
-    if qty_col is None:
-        # Se non esiste, non possiamo filtrare su qty: meglio fermarsi, così non fai un feed sbagliato.
-        raise RuntimeError(f"Missing quantity column. Expected one of: {qty_col_candidates}. Found: {reader.fieldnames}")
+def main():
+    with open_text(SOURCE_FILE) as fin:
+        first_line = fin.readline()
+        if not first_line:
+            raise RuntimeError("Empty source file")
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.DictWriter(fout, fieldnames=reader.fieldnames, delimiter=delimiter)
-        writer.writeheader()
+        delimiter = detect_delimiter(first_line)
+        fin.seek(0)
 
-        kept = 0
-        seen = 0
+        reader = csv.DictReader(fin, delimiter=delimiter)
+        if not reader.fieldnames:
+            raise RuntimeError("CSV has no header row / fieldnames")
 
-        for row in reader:
-            seen += 1
+        # Normalizza header (BOM, spazi)
+        reader.fieldnames = normalize_fieldnames(reader.fieldnames)
 
-            category = (row.get("cat1") or "").strip()
-            if category not in ALLOWED_CATEGORIES:
-                continue
+        # Colonne richieste nel tuo feed
+        require_columns(reader.fieldnames, ["sku", "cat1", "quantita"])
 
-            sku_raw = row.get("sku") or ""
-            supplier = extract_supplier(sku_raw)
-            if supplier not in ALLOWED_SUPPLIERS:
-                continue
+        # Scriviamo nello stesso delimitatore del file (TSV in questo caso)
+        with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
+            writer = csv.DictWriter(fout, fieldnames=reader.fieldnames, delimiter=delimiter)
+            writer.writeheader()
 
-            qty = parse_int(row.get(qty_col), 0)
-            if qty < MIN_QTY:
-                continue
+            rows_in = 0
+            rows_out = 0
+            skipped_cat = 0
+            skipped_supplier = 0
+            skipped_qty = 0
+            skipped_badsku = 0
 
-            writer.writerow(row)
-            kept += 1
+            for row in reader:
+                rows_in += 1
 
-        print(f"Delimiter={repr(delimiter)} qty_col={qty_col} rows_in={seen} rows_out={kept}")
+                # Categoria
+                cat = (row.get("cat1") or "").strip()
+                if cat not in ALLOWED_CATEGORIES:
+                    skipped_cat += 1
+                    continue
+
+                # Supplier da SKU
+                sku_raw = row.get("sku") or ""
+                supplier = extract_supplier(sku_raw)
+                if not supplier:
+                    skipped_badsku += 1
+                    continue
+                if supplier not in ALLOWED_SUPPLIERS:
+                    skipped_supplier += 1
+                    continue
+
+                # Quantità
+                qty = parse_int(row.get("quantita"), 0)
+                if qty < MIN_QTY:
+                    skipped_qty += 1
+                    continue
+
+                writer.writerow(row)
+                rows_out += 1
+
+            # Log finale (visibile nei log Action)
+            print(f"delimiter={repr(delimiter)}")
+            print(f"rows_in={rows_in} rows_out={rows_out}")
+            print(f"skipped_cat={skipped_cat} skipped_supplier={skipped_supplier} skipped_qty={skipped_qty} skipped_badsku={skipped_badsku}")
+
+            if rows_out == 0:
+                print("WARNING: filtered output is empty. Check category string and input data.")
+
+if __name__ == "__main__":
+    main()
