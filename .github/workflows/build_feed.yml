@@ -17,6 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug repo files
+        run: |
+          set -e
+          echo "PWD=$(pwd)"
+          ls -lah
+          echo "Find generate_amazon*:"
+          find . -maxdepth 3 -type f -name "generate_amazon*" -print
+
+
       # ===============================
       # INSTALL DEPS (moved up)
       # ===============================
