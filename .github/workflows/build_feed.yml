@@ -40,6 +40,36 @@ jobs:
           echo "Filtered header preview:"
           head -n 2 filtered.csv | cat
 
+      # ===== STEP 1: DEBUG filtered.csv header + delimiter detection =====
+      - name: Debug filtered.csv header (detect delimiter)
+        run: |
+          set -e
+          python - << 'PY'
+          import csv
+          from pathlib import Path
+
+          p = Path("filtered.csv")
+          raw = p.read_bytes()
+          text = raw.decode("utf-8-sig", errors="replace")
+
+          sample = text[:8192]
+          try:
+              dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+              delim = dialect.delimiter
+          except Exception:
+              first = text.splitlines()[0] if text else ""
+              delim = ";" if first.count(";") > first.count(",") else ","
+
+          reader = csv.reader(text.splitlines(), delimiter=delim)
+          header = next(reader, [])
+          header_l = [h.strip().lower() for h in header]
+
+          print("Detected delimiter:", repr(delim))
+          print("Header columns count:", len(header))
+          print("Header columns:", header)
+          print("Header lower:", header_l)
+          PY
+
       - name: Install Google API deps
         run: |
           set -e
@@ -101,38 +131,67 @@ jobs:
           set -e
           python - << 'PY'
           import csv
+          from pathlib import Path
 
-          # Estrae SKU unici dal filtered.csv e salva baseline_skus.txt (1 sku per riga)
-          with open("filtered.csv", "r", encoding="utf-8", newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader, [])
-            header_l = [h.strip().lower() for h in header]
-            if not header_l:
-              raise RuntimeError("filtered.csv header missing")
+          def detect_delim(text: str) -> str:
+              sample = text[:8192]
+              try:
+                  d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+                  return d.delimiter
+              except Exception:
+                  first = text.splitlines()[0] if text else ""
+                  return ";" if first.count(";") > first.count(",") else ","
 
-            # tollerante: sku potrebbe essere 'sku' o simili
-            def find_col(names):
-              for n in names:
-                if n in header_l:
-                  return header_l.index(n)
+          def find_col(header_l, candidates):
+              norm = [h.replace(" ", "_") for h in header_l]
+              for c in candidates:
+                  c0 = c.lower().replace(" ", "_")
+                  # exact match
+                  for i, h in enumerate(norm):
+                      if h == c0:
+                          return i
+                  # contains match
+                  for i, h in enumerate(norm):
+                      if c0 in h:
+                          return i
               return -1
 
-            sku_i = find_col(["sku","seller_sku","item_sku"])
-            if sku_i < 0:
-              raise RuntimeError("SKU column not found in filtered.csv")
+          raw = Path("filtered.csv").read_bytes()
+          text = raw.decode("utf-8-sig", errors="replace")
+          delim = detect_delim(text)
 
-            seen = set()
-            for row in reader:
-              if not row: 
-                continue
-              sku = (row[sku_i] if sku_i < len(row) else "").strip()
+          reader = csv.reader(text.splitlines(), delimiter=delim)
+          header = next(reader, [])
+          header_l = [h.strip().lower() for h in header]
+
+          sku_i = find_col(header_l, [
+              "sku",
+              "seller_sku",
+              "seller sku",
+              "item_sku",
+              "item sku",
+              "merchant_sku",
+              "merchant sku",
+              "sku_id",
+              "seller-sku",
+          ])
+
+          if sku_i < 0:
+              raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
+
+          seen = set()
+          for row in reader:
+              if not row or sku_i >= len(row):
+                  continue
+              sku = (row[sku_i] or "").strip()
               if sku:
-                seen.add(sku)
+                  seen.add(sku)
 
           with open("baseline_skus.txt","w",encoding="utf-8",newline="\n") as out:
-            for sku in sorted(seen):
-              out.write(sku + "\n")
+              for sku in sorted(seen):
+                  out.write(sku + "\n")
 
+          print("Detected delimiter:", repr(delim))
           print("Baseline SKUs:", len(seen))
           PY
 
@@ -188,10 +247,11 @@ jobs:
           )
           service = build("drive", "v3", credentials=creds)
 
+          # baseline deve essere un file binario (txt caricato). Se non lo è, fallirà qui.
           data = service.files().get_media(fileId=file_id).execute()
-          # data è bytes
+
           with open("baseline_skus.txt","wb") as f:
-            f.write(data)
+              f.write(data)
 
           print("Downloaded baseline_skus.txt bytes:", len(data))
           PY
@@ -202,62 +262,78 @@ jobs:
           set -e
           python - << 'PY'
           import csv
+          from pathlib import Path
+
+          def detect_delim(text: str) -> str:
+              sample = text[:8192]
+              try:
+                  d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+                  return d.delimiter
+              except Exception:
+                  first = text.splitlines()[0] if text else ""
+                  return ";" if first.count(";") > first.count(",") else ","
+
+          def find_col(header_l, candidates):
+              norm = [h.replace(" ", "_") for h in header_l]
+              for c in candidates:
+                  c0 = c.lower().replace(" ", "_")
+                  for i, h in enumerate(norm):
+                      if h == c0:
+                          return i
+                  for i, h in enumerate(norm):
+                      if c0 in h:
+                          return i
+              return -1
 
           # 1) carica baseline
           baseline = set()
           with open("baseline_skus.txt","r",encoding="utf-8",errors="ignore") as f:
-            for line in f:
-              s = line.strip()
-              if s:
-                baseline.add(s)
+              for line in f:
+                  s = line.strip()
+                  if s:
+                      baseline.add(s)
 
-          # 2) diff sul filtered.csv e scrivi new_skus_0930.csv
-          with open("filtered.csv","r",encoding="utf-8",newline="") as fin:
-            reader = csv.reader(fin)
-            header = next(reader, [])
-            header_l = [h.strip().lower() for h in header]
+          # 2) leggi filtered.csv con delimiter auto
+          raw = Path("filtered.csv").read_bytes()
+          text = raw.decode("utf-8-sig", errors="replace")
+          delim = detect_delim(text)
 
-            def find_col(names):
-              for n in names:
-                if n in header_l:
-                  return header_l.index(n)
-              return -1
+          reader = csv.reader(text.splitlines(), delimiter=delim)
+          header = next(reader, [])
+          header_l = [h.strip().lower() for h in header]
 
-            sku_i = find_col(["sku","seller_sku","item_sku"])
-            supplier_i = find_col(["supplier_code","supplier","supplierid","supplier_id"])
-            name_i = find_col(["name","title","product_name"])
-            qty_i = find_col(["qty","quantity","quantita","stock"])
-            cat_i = find_col(["category","cat1","categoria"])
-            cost_i = find_col(["cost","price","base_price","prezzo","net_price"])
+          sku_i = find_col(header_l, ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"])
+          supplier_i = find_col(header_l, ["supplier_code","supplier","supplierid","supplier_id"])
+          name_i = find_col(header_l, ["name","title","product_name"])
+          qty_i = find_col(header_l, ["qty","quantity","quantita","stock"])
+          cat_i = find_col(header_l, ["category","cat1","categoria"])
+          cost_i = find_col(header_l, ["cost","price","base_price","prezzo","net_price"])
 
-            if sku_i < 0:
-              raise RuntimeError("SKU column not found in filtered.csv")
+          if sku_i < 0:
+              raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
 
-            out_header = ["sku","supplier_code","name","qty","category","cost"]
+          out_header = ["sku","supplier_code","name","qty","category","cost"]
+          rows_out = 0
 
-            rows_out = 0
-            with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
+          with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
               w = csv.writer(fout)
               w.writerow(out_header)
 
               for row in reader:
-                if not row:
-                  continue
-                sku = (row[sku_i] if sku_i < len(row) else "").strip()
-                if not sku:
-                  continue
-                if sku in baseline:
-                  continue
+                  if not row or sku_i >= len(row):
+                      continue
 
-                supplier = (row[supplier_i] if supplier_i >= 0 and supplier_i < len(row) else "").strip()
-                name = (row[name_i] if name_i >= 0 and name_i < len(row) else "").strip()
-                qty = (row[qty_i] if qty_i >= 0 and qty_i < len(row) else "").strip()
-                cat = (row[cat_i] if cat_i >= 0 and cat_i < len(row) else "").strip()
-                cost = (row[cost_i] if cost_i >= 0 and cost_i < len(row) else "").strip()
+                  sku = (row[sku_i] or "").strip()
+                  if not sku or sku in baseline:
+                      continue
 
-                w.writerow([sku, supplier, name, qty, cat, cost])
-                rows_out += 1
+                  def get(i):
+                      return (row[i] if i >= 0 and i < len(row) else "").strip()
 
+                  w.writerow([sku, get(supplier_i), get(name_i), get(qty_i), get(cat_i), get(cost_i)])
+                  rows_out += 1
+
+          print("Detected delimiter:", repr(delim))
           print("Baseline size:", len(baseline))
           print("New SKUs rows:", rows_out)
           PY
