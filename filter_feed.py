@@ -1,6 +1,6 @@
 import csv
 import re
-from typing import Dict, List, Tuple
+from typing import List
 
 SOURCE_FILE = "source.csv"
 OUTPUT_FILE = "filtered.csv"
@@ -9,6 +9,10 @@ OUTPUT_FILE = "filtered.csv"
 MIN_QTY = 10  # quantita >= 10
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
 ALLOWED_CATEGORIES = {"Informatica"}  # match esatto (trim), case-sensitive
+
+# ESCLUSIONE titolo: contiene "phs-memory" (case-insensitive)
+EXCLUDE_TITLE_SUBSTR = "phs-memory"
+TITLE_COLUMN = "titolo_prodotto"  # colonna reale del feed
 
 # SKU formato atteso: S_0373_ABC..., T_0380_5854285, ecc.
 SUPPLIER_RE = re.compile(r"^[A-Za-z]+_(\d{4})_")
@@ -26,8 +30,7 @@ def normalize_fieldnames(fieldnames: List[str]) -> List[str]:
     out = []
     for fn in fieldnames:
         s = (fn or "")
-        # BOM UTF-8 inizio file (es: '\ufeffcat1')
-        s = s.lstrip("\ufeff")
+        s = s.lstrip("\ufeff")  # BOM UTF-8 (es: '\ufeffcat1')
         s = s.strip()
         out.append(s)
     return out
@@ -68,10 +71,10 @@ def main():
         # Normalizza header (BOM, spazi)
         reader.fieldnames = normalize_fieldnames(reader.fieldnames)
 
-        # Colonne richieste nel tuo feed
-        require_columns(reader.fieldnames, ["sku", "cat1", "quantita"])
+        # Colonne richieste nel tuo feed (titolo_prodotto obbligatorio per filtro PHS)
+        require_columns(reader.fieldnames, ["sku", "cat1", "quantita", TITLE_COLUMN])
 
-        # Scriviamo nello stesso delimitatore del file (TSV in questo caso)
+        # Scriviamo nello stesso delimitatore del file (TSV/pipe/csv a seconda dell'input)
         with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
             writer = csv.DictWriter(fout, fieldnames=reader.fieldnames, delimiter=delimiter)
             writer.writeheader()
@@ -82,6 +85,7 @@ def main():
             skipped_supplier = 0
             skipped_qty = 0
             skipped_badsku = 0
+            skipped_phs = 0
 
             for row in reader:
                 rows_in += 1
@@ -108,13 +112,26 @@ def main():
                     skipped_qty += 1
                     continue
 
+                # Filtro titolo: escludi se contiene "phs-memory" (case-insensitive)
+                title = (row.get(TITLE_COLUMN) or "").strip().lower()
+                if EXCLUDE_TITLE_SUBSTR in title:
+                    skipped_phs += 1
+                    continue
+
                 writer.writerow(row)
                 rows_out += 1
 
             # Log finale (visibile nei log Action)
             print(f"delimiter={repr(delimiter)}")
+            print(f"title_column={TITLE_COLUMN} exclude_substr={EXCLUDE_TITLE_SUBSTR}")
             print(f"rows_in={rows_in} rows_out={rows_out}")
-            print(f"skipped_cat={skipped_cat} skipped_supplier={skipped_supplier} skipped_qty={skipped_qty} skipped_badsku={skipped_badsku}")
+            print(
+                f"skipped_cat={skipped_cat} "
+                f"skipped_supplier={skipped_supplier} "
+                f"skipped_qty={skipped_qty} "
+                f"skipped_badsku={skipped_badsku} "
+                f"skipped_phs={skipped_phs}"
+            )
 
             if rows_out == 0:
                 print("WARNING: filtered output is empty. Check category string and input data.")
