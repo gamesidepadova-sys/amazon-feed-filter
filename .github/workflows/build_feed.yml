@@ -5,7 +5,6 @@ on:
     - cron: "*/15 * * * *"   # ogni 15 minuti
   workflow_dispatch:
 
-# Evita sovrapposizioni: mantiene sempre l'ultimo run
 concurrency:
   group: feed-filter
   cancel-in-progress: true
@@ -46,22 +45,44 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth
 
-      - name: Upload filtered.csv to Google Drive (overwrite by fileId)
+      - name: Write service account JSON to file
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
+        run: |
+          set -e
+          if [ -z "$GDRIVE_SA_JSON" ]; then
+            echo "GDRIVE_SA_JSON secret is empty or missing"
+            exit 1
+          fi
+
+          # Scrive il JSON su file (multiline ok)
+          echo "$GDRIVE_SA_JSON" > sa.json
+
+          # Validazione JSON + stampa email SA
+          python - << 'PY'
+          import json
+          with open("sa.json","r",encoding="utf-8") as f:
+              obj = json.load(f)
+          print("SA client_email:", obj.get("client_email"))
+          PY
+
+      - name: Upload filtered.csv to Google Drive (overwrite by fileId)
+        env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
+          set -e
           python - << 'PY'
-          import os, json
+          import os
           from google.oauth2 import service_account
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
-          sa = json.loads(os.environ["GDRIVE_SA_JSON"])
-          file_id = os.environ["GDRIVE_FILE_ID"]
+          file_id = os.environ.get("GDRIVE_FILE_ID","").strip()
+          if not file_id:
+              raise RuntimeError("GDRIVE_FILE_ID is empty or missing")
 
-          creds = service_account.Credentials.from_service_account_info(
-              sa,
+          creds = service_account.Credentials.from_service_account_file(
+              "sa.json",
               scopes=["https://www.googleapis.com/auth/drive"]
           )
           service = build("drive", "v3", credentials=creds)
@@ -76,7 +97,6 @@ jobs:
           print("Updated Drive file:", updated.get("id"))
           PY
 
-      # Opzionale: salva sempre l'output come artifact per debug
       - name: Upload artifact (debug)
         uses: actions/upload-artifact@v4
         with:
