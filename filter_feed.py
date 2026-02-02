@@ -3,9 +3,6 @@ import os
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Any
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-
 SHEET_SELECTION = "selezione"
 SHEET_SETTINGS = "settings"
 
