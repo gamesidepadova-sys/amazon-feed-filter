@@ -1,213 +1,138 @@
 import csv
-import os
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Any
+import re
+from typing import List
 
-SHEET_SELECTION = "selezione"
-SHEET_SETTINGS = "settings"
+SOURCE_FILE = "source.csv"
+OUTPUT_FILE = "filtered.csv"
 
-INPUT_FILTERED = "filtered.csv"
+# Filtri richiesti
+MIN_QTY = 10  # quantita >= 10
+ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
+ALLOWED_CATEGORIES = {"Informatica"}  # match esatto (trim), case-sensitive
 
+# ESCLUSIONE titolo: contiene "phs-memory" (case-insensitive)
+EXCLUDE_TITLE_SUBSTR = "phs-memory"
+TITLE_COLUMN = "titolo_prodotto"  # colonna reale del feed
 
-def money(x: Decimal, decimals: int = 2) -> Decimal:
-    q = Decimal("1." + "0" * decimals)
-    return x.quantize(q, rounding=ROUND_HALF_UP)
+# SKU formato atteso: S_0373_ABC..., T_0380_5854285, ecc.
+SUPPLIER_RE = re.compile(r"^[A-Za-z]+_(\d{4})_")
 
+def detect_delimiter(header_line: str) -> str:
+    """Auto-detect: tab -> pipe -> comma."""
+    if "\t" in header_line:
+        return "\t"
+    if "|" in header_line:
+        return "|"
+    return ","
 
-def norm_yes(x: Any) -> bool:
-    return str(x or "").strip().upper() == "YES"
-
-
-def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]:
-    resp = service.spreadsheets().values().get(
-        spreadsheetId=spreadsheet_id,
-        range=sheet_name
-    ).execute()
-    return resp.get("values", [])
-
-
-def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
-    out = {}
-    for r in rows:
-        if len(r) < 2:
-            continue
-        k = str(r[0]).strip()
-        v = str(r[1]).strip()
-        if k:
-            out[k] = v
+def normalize_fieldnames(fieldnames: List[str]) -> List[str]:
+    """Rimuove BOM e spazi; mantiene i nomi originali salvo pulizia minima."""
+    out = []
+    for fn in fieldnames:
+        s = (fn or "")
+        s = s.lstrip("\ufeff")  # BOM UTF-8 (es: '\ufeffcat1')
+        s = s.strip()
+        out.append(s)
     return out
 
-
-def to_int(x: Any, default: int = 0) -> int:
+def parse_int(x, default=0) -> int:
     try:
-        return int(str(x).strip())
+        return int(str(x or "").strip())
     except Exception:
         return default
 
+def extract_supplier(sku: str) -> str:
+    s = str(sku or "").strip()
+    m = SUPPLIER_RE.match(s)
+    return m.group(1) if m else ""
 
-def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
-    try:
-        s = str(x).strip().replace(",", ".")
-        if not s:
-            return default
-        return Decimal(s)
-    except Exception:
-        return default
+def open_text(path: str):
+    # utf-8-sig rimuove BOM dal testo in modo naturale
+    return open(path, "r", encoding="utf-8-sig", newline="")
 
-
-def build_index(header: List[str]) -> Dict[str, int]:
-    return {str(h).strip().lower(): i for i, h in enumerate(header)}
-
-
-def get_cell(row: List[str], idx: Dict[str, int], key: str, default: str = "") -> str:
-    i = idx.get(key.lower(), -1)
-    if i < 0 or i >= len(row):
-        return default
-    return str(row[i]).strip()
-
-
-def get_setting(settings: Dict[str, str], key: str, country: str, default: str) -> str:
-    """
-    Cerca prima key_<country> (es. vat_rate_pct_it), poi key (vat_rate_pct), poi default.
-    """
-    ck = f"{key}_{country}".lower()
-    if ck in {k.lower() for k in settings.keys()}:
-        # recupero preserving original key casing
-        for k, v in settings.items():
-            if k.lower() == ck:
-                return v
-    if key in settings:
-        return settings[key]
-    # fallback anche case-insensitive
-    for k, v in settings.items():
-        if k.lower() == key.lower():
-            return v
-    return default
-
+def require_columns(fieldnames: List[str], required: List[str]) -> None:
+    missing = [c for c in required if c not in fieldnames]
+    if missing:
+        raise RuntimeError(f"Missing columns: {missing}. Found: {fieldnames}")
 
 def main():
-    spreadsheet_id = os.environ.get("GSHEET_ID", "").strip()
-    if not spreadsheet_id:
-        raise RuntimeError("GSHEET_ID is empty or missing")
+    with open_text(SOURCE_FILE) as fin:
+        first_line = fin.readline()
+        if not first_line:
+            raise RuntimeError("Empty source file")
 
-    country = os.environ.get("COUNTRY", "it").strip().lower()
-    if country not in {"it", "de", "fr", "es"}:
-        raise RuntimeError("COUNTRY must be one of: it,de,fr,es")
-
-    out_b2c = f"amazon_{country}_b2c.csv"
-    out_b2b = f"amazon_{country}_b2b.csv"
-
-    creds = service_account.Credentials.from_service_account_file(
-        "sa.json",
-        scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    )
-    sheets = build("sheets", "v4", credentials=creds)
-
-    # ===== SETTINGS =====
-    settings = kv_settings(read_sheet(sheets, spreadsheet_id, SHEET_SETTINGS))
-
-    # percentuali intere come da settings (20, 28, 7, 8, 9)
-    vat_pct = to_dec(get_setting(settings, "vat_rate_pct", country, "20"))
-    b2c_markup_pct = to_dec(get_setting(settings, "b2c_markup_pct", country, "28"))
-    b2b_disc_pct = to_dec(get_setting(settings, "b2b_discount_vs_b2c_pct", country, "7"))
-    qty2_disc_pct = to_dec(get_setting(settings, "qty2_discount_vs_b2c_pct", country, "8"))
-    qty4_disc_pct = to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9"))
-    round_decimals = to_int(get_setting(settings, "price_round_decimals", country, "2"), 2)
-
-    vat_mul = Decimal("1") + vat_pct / Decimal("100")
-    b2c_mul = Decimal("1") + b2c_markup_pct / Decimal("100")
-    b2b_mul = Decimal("1") - b2b_disc_pct / Decimal("100")
-    qty2_mul = Decimal("1") - qty2_disc_pct / Decimal("100")
-    qty4_mul = Decimal("1") - qty4_disc_pct / Decimal("100")
-
-    # ===== SELEZIONE =====
-    sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
-    if not sel_rows:
-        raise RuntimeError('Sheet "selezione" empty or missing')
-
-    sel_idx = build_index(sel_rows[0])
-
-    pub_b2c, pub_b2b = set(), set()
-    for r in sel_rows[1:]:
-        sku = get_cell(r, sel_idx, "sku")
-        if not sku:
-            continue
-        if norm_yes(get_cell(r, sel_idx, "publish_b2c")):
-            pub_b2c.add(sku)
-        if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
-            pub_b2b.add(sku)
-
-    # ===== FILTERED =====
-    with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
-        first = fin.readline()
+        delimiter = detect_delimiter(first_line)
         fin.seek(0)
-        delim = "\t" if "\t" in first else ("|" if "|" in first else ",")
-        reader = csv.DictReader(fin, delimiter=delim)
 
+        reader = csv.DictReader(fin, delimiter=delimiter)
         if not reader.fieldnames:
-            raise RuntimeError("filtered.csv has no header row")
+            raise RuntimeError("CSV has no header row / fieldnames")
 
-        header_lower = {h.strip().lower() for h in reader.fieldnames}
-        if "sku" not in header_lower:
-            raise RuntimeError("filtered.csv missing 'sku'")
-        if "prezzo_iva_esclusa" not in header_lower:
-            raise RuntimeError("filtered.csv missing 'prezzo_iva_esclusa'")
-        if "quantita" not in header_lower:
-            # ok: non blocchiamo, ma qty = 0 se manca
-            print("WARNING: filtered.csv missing 'quantita' (qty will be 0)")
+        # Normalizza header (BOM, spazi)
+        reader.fieldnames = normalize_fieldnames(reader.fieldnames)
 
-        rows_b2c = 0
-        rows_b2b = 0
+        # Colonne richieste (titolo_prodotto obbligatorio per filtro PHS)
+        require_columns(reader.fieldnames, ["sku", "cat1", "quantita", TITLE_COLUMN])
 
-        with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
-             open(out_b2b, "w", encoding="utf-8", newline="") as f2:
+        with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
+            writer = csv.DictWriter(fout, fieldnames=reader.fieldnames, delimiter=delimiter)
+            writer.writeheader()
 
-            w1 = csv.DictWriter(f1, fieldnames=["sku", "price_b2c_eur", "qty_available", "country"])
-            w2 = csv.DictWriter(f2, fieldnames=[
-                "sku", "price_b2c_eur", "price_b2b_eur",
-                "qty2_price_eur", "qty4_price_eur", "qty_available", "country"
-            ])
-            w1.writeheader()
-            w2.writeheader()
+            rows_in = 0
+            rows_out = 0
+            skipped_cat = 0
+            skipped_supplier = 0
+            skipped_qty = 0
+            skipped_badsku = 0
+            skipped_phs = 0
 
             for row in reader:
-                sku = (row.get("sku") or "").strip()
-                if not sku:
+                rows_in += 1
+
+                # Categoria
+                cat = (row.get("cat1") or "").strip()
+                if cat not in ALLOWED_CATEGORIES:
+                    skipped_cat += 1
                     continue
 
-                base = to_dec(row.get("prezzo_iva_esclusa"))
-                qty = to_int(row.get("quantita"), 0)
+                # Supplier da SKU
+                sku_raw = row.get("sku") or ""
+                supplier = extract_supplier(sku_raw)
+                if not supplier:
+                    skipped_badsku += 1
+                    continue
+                if supplier not in ALLOWED_SUPPLIERS:
+                    skipped_supplier += 1
+                    continue
 
-                if sku in pub_b2c:
-                    b2c = money(base * b2c_mul * vat_mul, round_decimals)
-                    w1.writerow({
-                        "sku": sku,
-                        "price_b2c_eur": f"{b2c}",
-                        "qty_available": qty,
-                        "country": country,
-                    })
-                    rows_b2c += 1
+                # Quantità
+                qty = parse_int(row.get("quantita"), 0)
+                if qty < MIN_QTY:
+                    skipped_qty += 1
+                    continue
 
-                if sku in pub_b2b:
-                    b2c = money(base * b2c_mul * vat_mul, round_decimals)
-                    b2b = money(b2c * b2b_mul, round_decimals)
-                    q2 = money(b2c * qty2_mul, round_decimals)
-                    q4 = money(b2c * qty4_mul, round_decimals)
-                    w2.writerow({
-                        "sku": sku,
-                        "price_b2c_eur": f"{b2c}",
-                        "price_b2b_eur": f"{b2b}",
-                        "qty2_price_eur": f"{q2}",
-                        "qty4_price_eur": f"{q4}",
-                        "qty_available": qty,
-                        "country": country,
-                    })
-                    rows_b2b += 1
+                # Filtro titolo: escludi se contiene "phs-memory" (case-insensitive)
+                title = (row.get(TITLE_COLUMN) or "").strip().lower()
+                if EXCLUDE_TITLE_SUBSTR in title:
+                    skipped_phs += 1
+                    continue
 
-    print(f"[{country}] Generated {out_b2c} rows={rows_b2c}")
-    print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
-    print(f"[{country}] Pricing: vat={vat_pct}% b2c_markup={b2c_markup_pct}% b2b=-{b2b_disc_pct}% qty2=-{qty2_disc_pct}% qty4=-{qty4_disc_pct}% decimals={round_decimals}")
+                writer.writerow(row)
+                rows_out += 1
 
+            print(f"delimiter={repr(delimiter)}")
+            print(f"title_column={TITLE_COLUMN} exclude_substr={EXCLUDE_TITLE_SUBSTR}")
+            print(f"rows_in={rows_in} rows_out={rows_out}")
+            print(
+                f"skipped_cat={skipped_cat} "
+                f"skipped_supplier={skipped_supplier} "
+                f"skipped_qty={skipped_qty} "
+                f"skipped_badsku={skipped_badsku} "
+                f"skipped_phs={skipped_phs}"
+            )
+
+            if rows_out == 0:
+                print("WARNING: filtered output is empty. Check category string and input data.")
 
 if __name__ == "__main__":
     main()
