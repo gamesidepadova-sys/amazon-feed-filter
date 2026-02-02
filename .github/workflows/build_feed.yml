@@ -97,10 +97,59 @@ jobs:
           print("Updated Drive file:", updated.get("id"))
           PY
 
+      # ===== STEP 2: placeholder + upload new_skus_0930.csv (overwrite) =====
+
+      - name: Build new_skus_0930.csv (placeholder)
+        run: |
+          set -e
+          echo "sku,supplier_code,name,qty,category,cost" > new_skus_0930.csv
+          echo "Created placeholder new_skus_0930.csv"
+          ls -lh new_skus_0930.csv
+          head -n 2 new_skus_0930.csv | cat
+
+      - name: Upload new_skus_0930.csv to Google Drive (overwrite by fileId)
+        env:
+          NEWSKUS_FILE_ID: ${{ secrets.NEWSKUS_FILE_ID }}
+        run: |
+          set -e
+          python - << 'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          file_id = os.environ.get("NEWSKUS_FILE_ID","").strip()
+          if not file_id:
+              raise RuntimeError("NEWSKUS_FILE_ID is empty or missing")
+
+          creds = service_account.Credentials.from_service_account_file(
+              "sa.json",
+              scopes=["https://www.googleapis.com/auth/drive"]
+          )
+          service = build("drive", "v3", credentials=creds)
+
+          media = MediaFileUpload("new_skus_0930.csv", mimetype="text/csv", resumable=True)
+
+          updated = service.files().update(
+              fileId=file_id,
+              media_body=media
+          ).execute()
+
+          print("Updated Drive file:", updated.get("id"))
+          PY
+
       - name: Upload artifact (debug)
         uses: actions/upload-artifact@v4
         with:
           name: filtered-feed
           path: filtered.csv
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload artifact (debug new_skus)
+        uses: actions/upload-artifact@v4
+        with:
+          name: new-skus
+          path: new_skus_0930.csv
           if-no-files-found: error
           retention-days: 3
