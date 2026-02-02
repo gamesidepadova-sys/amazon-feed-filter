@@ -304,7 +304,7 @@ jobs:
 
           sku_i = find_col(header_l, ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"])
           supplier_i = find_col(header_l, ["supplier_code","supplier","supplierid","supplier_id"])
-          name_i = find_col(header_l, ["name","title","product_name"])
+          name_i = find_col(header_l, ["titolo_prodotto", "name", "title", "product_name"])
           qty_i = find_col(header_l, ["qty","quantity","quantita","stock"])
           cat_i = find_col(header_l, ["category","cat1","categoria"])
           cost_i = find_col(header_l, ["cost","price","base_price","prezzo","net_price"])
