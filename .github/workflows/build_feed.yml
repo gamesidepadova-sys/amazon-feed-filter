@@ -3,6 +3,7 @@ name: Build filtered CSV feed
 on:
   schedule:
     - cron: "*/15 * * * *"   # ogni 15 minuti
+    - cron: "5 0 * * *"      # daily baseline reset (UTC)
   workflow_dispatch:
 
 concurrency:
@@ -55,10 +56,8 @@ jobs:
             exit 1
           fi
 
-          # Scrive il JSON su file (multiline ok)
           echo "$GDRIVE_SA_JSON" > sa.json
 
-          # Validazione JSON + stampa email SA
           python - << 'PY'
           import json
           with open("sa.json","r",encoding="utf-8") as f:
@@ -88,26 +87,183 @@ jobs:
           service = build("drive", "v3", credentials=creds)
 
           media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
-
-          updated = service.files().update(
-              fileId=file_id,
-              media_body=media
-          ).execute()
+          updated = service.files().update(fileId=file_id, media_body=media).execute()
 
           print("Updated Drive file:", updated.get("id"))
           PY
 
-      # ===== STEP 2: placeholder + upload new_skus_0930.csv (overwrite) =====
-
-      - name: Build new_skus_0930.csv (placeholder)
+      # ==============================
+      # BASELINE: daily reset (UTC)
+      # ==============================
+      - name: Build baseline_skus.txt (daily)
+        if: github.event_name == 'schedule' && github.event.schedule == '5 0 * * *'
         run: |
           set -e
-          echo "sku,supplier_code,name,qty,category,cost" > new_skus_0930.csv
-          echo "Created placeholder new_skus_0930.csv"
-          ls -lh new_skus_0930.csv
-          head -n 2 new_skus_0930.csv | cat
+          python - << 'PY'
+          import csv
+
+          # Estrae SKU unici dal filtered.csv e salva baseline_skus.txt (1 sku per riga)
+          with open("filtered.csv", "r", encoding="utf-8", newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader, [])
+            header_l = [h.strip().lower() for h in header]
+            if not header_l:
+              raise RuntimeError("filtered.csv header missing")
+
+            # tollerante: sku potrebbe essere 'sku' o simili
+            def find_col(names):
+              for n in names:
+                if n in header_l:
+                  return header_l.index(n)
+              return -1
+
+            sku_i = find_col(["sku","seller_sku","item_sku"])
+            if sku_i < 0:
+              raise RuntimeError("SKU column not found in filtered.csv")
+
+            seen = set()
+            for row in reader:
+              if not row: 
+                continue
+              sku = (row[sku_i] if sku_i < len(row) else "").strip()
+              if sku:
+                seen.add(sku)
+
+          with open("baseline_skus.txt","w",encoding="utf-8",newline="\n") as out:
+            for sku in sorted(seen):
+              out.write(sku + "\n")
+
+          print("Baseline SKUs:", len(seen))
+          PY
+
+      - name: Upload baseline_skus.txt to Google Drive (overwrite by fileId)
+        if: github.event_name == 'schedule' && github.event.schedule == '5 0 * * *'
+        env:
+          BASELINE_FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
+        run: |
+          set -e
+          python - << 'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          file_id = os.environ.get("BASELINE_FILE_ID","").strip()
+          if not file_id:
+              raise RuntimeError("BASELINE_FILE_ID is empty or missing")
+
+          creds = service_account.Credentials.from_service_account_file(
+              "sa.json",
+              scopes=["https://www.googleapis.com/auth/drive"]
+          )
+          service = build("drive", "v3", credentials=creds)
+
+          media = MediaFileUpload("baseline_skus.txt", mimetype="text/plain", resumable=True)
+          updated = service.files().update(fileId=file_id, media_body=media).execute()
+
+          print("Updated baseline file:", updated.get("id"))
+          PY
+
+      # ==============================
+      # DIFF: every 15 min (and manual)
+      # ==============================
+      - name: Download baseline_skus.txt from Google Drive
+        if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
+        env:
+          BASELINE_FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
+        run: |
+          set -e
+          python - << 'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+
+          file_id = os.environ.get("BASELINE_FILE_ID","").strip()
+          if not file_id:
+              raise RuntimeError("BASELINE_FILE_ID is empty or missing")
+
+          creds = service_account.Credentials.from_service_account_file(
+              "sa.json",
+              scopes=["https://www.googleapis.com/auth/drive"]
+          )
+          service = build("drive", "v3", credentials=creds)
+
+          data = service.files().get_media(fileId=file_id).execute()
+          # data è bytes
+          with open("baseline_skus.txt","wb") as f:
+            f.write(data)
+
+          print("Downloaded baseline_skus.txt bytes:", len(data))
+          PY
+
+      - name: Build new_skus_0930.csv (diff vs baseline)
+        if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
+        run: |
+          set -e
+          python - << 'PY'
+          import csv
+
+          # 1) carica baseline
+          baseline = set()
+          with open("baseline_skus.txt","r",encoding="utf-8",errors="ignore") as f:
+            for line in f:
+              s = line.strip()
+              if s:
+                baseline.add(s)
+
+          # 2) diff sul filtered.csv e scrivi new_skus_0930.csv
+          with open("filtered.csv","r",encoding="utf-8",newline="") as fin:
+            reader = csv.reader(fin)
+            header = next(reader, [])
+            header_l = [h.strip().lower() for h in header]
+
+            def find_col(names):
+              for n in names:
+                if n in header_l:
+                  return header_l.index(n)
+              return -1
+
+            sku_i = find_col(["sku","seller_sku","item_sku"])
+            supplier_i = find_col(["supplier_code","supplier","supplierid","supplier_id"])
+            name_i = find_col(["name","title","product_name"])
+            qty_i = find_col(["qty","quantity","quantita","stock"])
+            cat_i = find_col(["category","cat1","categoria"])
+            cost_i = find_col(["cost","price","base_price","prezzo","net_price"])
+
+            if sku_i < 0:
+              raise RuntimeError("SKU column not found in filtered.csv")
+
+            out_header = ["sku","supplier_code","name","qty","category","cost"]
+
+            rows_out = 0
+            with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
+              w = csv.writer(fout)
+              w.writerow(out_header)
+
+              for row in reader:
+                if not row:
+                  continue
+                sku = (row[sku_i] if sku_i < len(row) else "").strip()
+                if not sku:
+                  continue
+                if sku in baseline:
+                  continue
+
+                supplier = (row[supplier_i] if supplier_i >= 0 and supplier_i < len(row) else "").strip()
+                name = (row[name_i] if name_i >= 0 and name_i < len(row) else "").strip()
+                qty = (row[qty_i] if qty_i >= 0 and qty_i < len(row) else "").strip()
+                cat = (row[cat_i] if cat_i >= 0 and cat_i < len(row) else "").strip()
+                cost = (row[cost_i] if cost_i >= 0 and cost_i < len(row) else "").strip()
+
+                w.writerow([sku, supplier, name, qty, cat, cost])
+                rows_out += 1
+
+          print("Baseline size:", len(baseline))
+          print("New SKUs rows:", rows_out)
+          PY
 
       - name: Upload new_skus_0930.csv to Google Drive (overwrite by fileId)
+        if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
         env:
           NEWSKUS_FILE_ID: ${{ secrets.NEWSKUS_FILE_ID }}
         run: |
@@ -129,13 +285,9 @@ jobs:
           service = build("drive", "v3", credentials=creds)
 
           media = MediaFileUpload("new_skus_0930.csv", mimetype="text/csv", resumable=True)
+          updated = service.files().update(fileId=file_id, media_body=media).execute()
 
-          updated = service.files().update(
-              fileId=file_id,
-              media_body=media
-          ).execute()
-
-          print("Updated Drive file:", updated.get("id"))
+          print("Updated new_skus file:", updated.get("id"))
           PY
 
       - name: Upload artifact (debug)
@@ -152,4 +304,12 @@ jobs:
           name: new-skus
           path: new_skus_0930.csv
           if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload artifact (debug baseline)
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-skus
+          path: baseline_skus.txt
+          if-no-files-found: warn
           retention-days: 3
