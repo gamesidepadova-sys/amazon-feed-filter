@@ -1,9 +1,9 @@
-name: Build filtered CSV feed
+name: Build filtered CSV feed + Amazon feeds
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # ogni 15 minuti
-    - cron: "5 0 * * *"      # daily baseline reset (UTC)
+    - cron: "*/15 * * * *"     # filtro + diff
+    - cron: "5 0 * * *"        # baseline giornaliera (UTC)
   workflow_dispatch:
 
 concurrency:
@@ -17,85 +17,54 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ===============================
+      # DOWNLOAD SOURCE
+      # ===============================
       - name: Download source CSV
         run: |
           set -e
-          echo "Downloading source..."
           curl -L --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 3600 \
-            -w "\nHTTP_CODE=%{http_code}\nFINAL_URL=%{url_effective}\n" \
             "${{ secrets.SOURCE_CSV_URL }}" -o source.csv
-
-          echo "Downloaded file:"
           ls -lh source.csv
-          echo "Header preview:"
           head -n 2 source.csv | cat
 
+      # ===============================
+      # FILTER
+      # ===============================
       - name: Filter CSV
         run: |
           set -e
           python filter_feed.py
-
-          echo "Filtered file:"
           ls -lh filtered.csv
-          echo "Filtered header preview:"
           head -n 2 filtered.csv | cat
 
-      # ===== STEP 1: DEBUG filtered.csv header + delimiter detection =====
-      - name: Debug filtered.csv header (detect delimiter)
-        run: |
-          set -e
-          python - << 'PY'
-          import csv
-          from pathlib import Path
-
-          p = Path("filtered.csv")
-          raw = p.read_bytes()
-          text = raw.decode("utf-8-sig", errors="replace")
-
-          sample = text[:8192]
-          try:
-              dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-              delim = dialect.delimiter
-          except Exception:
-              first = text.splitlines()[0] if text else ""
-              delim = ";" if first.count(";") > first.count(",") else ","
-
-          reader = csv.reader(text.splitlines(), delimiter=delim)
-          header = next(reader, [])
-          header_l = [h.strip().lower() for h in header]
-
-          print("Detected delimiter:", repr(delim))
-          print("Header columns count:", len(header))
-          print("Header columns:", header)
-          print("Header lower:", header_l)
-          PY
-
+      # ===============================
+      # GOOGLE API DEPS
+      # ===============================
       - name: Install Google API deps
         run: |
           set -e
           python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth
+          pip install google-api-python-client google-auth google-auth-httplib2
 
-      - name: Write service account JSON to file
+      # ===============================
+      # SERVICE ACCOUNT
+      # ===============================
+      - name: Write service account JSON
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
         run: |
           set -e
-          if [ -z "$GDRIVE_SA_JSON" ]; then
-            echo "GDRIVE_SA_JSON secret is empty or missing"
-            exit 1
-          fi
-
           echo "$GDRIVE_SA_JSON" > sa.json
-
           python - << 'PY'
           import json
-          with open("sa.json","r",encoding="utf-8") as f:
-              obj = json.load(f)
-          print("SA client_email:", obj.get("client_email"))
+          print("SA:", json.load(open("sa.json"))["client_email"])
           PY
 
-      - name: Upload filtered.csv to Google Drive (overwrite by fileId)
+      # ===============================
+      # UPLOAD filtered.csv
+      # ===============================
+      - name: Upload filtered.csv to Drive
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
@@ -106,286 +75,80 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
-          file_id = os.environ.get("GDRIVE_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("GDRIVE_FILE_ID is empty or missing")
-
           creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
+              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
           )
           service = build("drive", "v3", credentials=creds)
-
           media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
-          updated = service.files().update(fileId=file_id, media_body=media).execute()
-
-          print("Updated Drive file:", updated.get("id"))
+          service.files().update(
+              fileId=os.environ["GDRIVE_FILE_ID"],
+              media_body=media
+          ).execute()
+          print("filtered.csv updated")
           PY
 
-      # ==============================
-      # BASELINE: daily reset (UTC)
-      # ==============================
-      - name: Build baseline_skus.txt (daily)
-        if: github.event_name == 'schedule' && github.event.schedule == '5 0 * * *'
+      # ===============================
+      # BASELINE (daily)
+      # ===============================
+      - name: Build baseline_skus.txt
+        if: github.event.schedule == '5 0 * * *'
         run: |
           set -e
-          python - << 'PY'
-          import csv
-          from pathlib import Path
+          python build_baseline.py
 
-          def detect_delim(text: str) -> str:
-              sample = text[:8192]
-              try:
-                  d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-                  return d.delimiter
-              except Exception:
-                  first = text.splitlines()[0] if text else ""
-                  return ";" if first.count(";") > first.count(",") else ","
-
-          def find_col(header_l, candidates):
-              norm = [h.replace(" ", "_") for h in header_l]
-              for c in candidates:
-                  c0 = c.lower().replace(" ", "_")
-                  # exact match
-                  for i, h in enumerate(norm):
-                      if h == c0:
-                          return i
-                  # contains match
-                  for i, h in enumerate(norm):
-                      if c0 in h:
-                          return i
-              return -1
-
-          raw = Path("filtered.csv").read_bytes()
-          text = raw.decode("utf-8-sig", errors="replace")
-          delim = detect_delim(text)
-
-          reader = csv.reader(text.splitlines(), delimiter=delim)
-          header = next(reader, [])
-          header_l = [h.strip().lower() for h in header]
-
-          sku_i = find_col(header_l, [
-              "sku",
-              "seller_sku",
-              "seller sku",
-              "item_sku",
-              "item sku",
-              "merchant_sku",
-              "merchant sku",
-              "sku_id",
-              "seller-sku",
-          ])
-
-          if sku_i < 0:
-              raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
-
-          seen = set()
-          for row in reader:
-              if not row or sku_i >= len(row):
-                  continue
-              sku = (row[sku_i] or "").strip()
-              if sku:
-                  seen.add(sku)
-
-          with open("baseline_skus.txt","w",encoding="utf-8",newline="\n") as out:
-              for sku in sorted(seen):
-                  out.write(sku + "\n")
-
-          print("Detected delimiter:", repr(delim))
-          print("Baseline SKUs:", len(seen))
-          PY
-
-      - name: Upload baseline_skus.txt to Google Drive (overwrite by fileId)
-        if: github.event_name == 'schedule' && github.event.schedule == '5 0 * * *'
+      - name: Upload baseline_skus.txt
+        if: github.event.schedule == '5 0 * * *'
         env:
           BASELINE_FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
+          python upload_txt.py baseline_skus.txt "$BASELINE_FILE_ID"
 
-          file_id = os.environ.get("BASELINE_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("BASELINE_FILE_ID is empty or missing")
-
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-
-          media = MediaFileUpload("baseline_skus.txt", mimetype="text/plain", resumable=True)
-          updated = service.files().update(fileId=file_id, media_body=media).execute()
-
-          print("Updated baseline file:", updated.get("id"))
-          PY
-
-      # ==============================
-      # DIFF: every 15 min (and manual)
-      # ==============================
-      - name: Download baseline_skus.txt from Google Drive
-        if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
+      # ===============================
+      # DIFF new_skus_0930.csv
+      # ===============================
+      - name: Download baseline_skus.txt
+        if: github.event.schedule != '5 0 * * *'
         env:
           BASELINE_FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
+          python download_txt.py baseline_skus.txt "$BASELINE_FILE_ID"
 
-          file_id = os.environ.get("BASELINE_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("BASELINE_FILE_ID is empty or missing")
-
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-
-          # baseline deve essere un file binario (txt caricato). Se non lo è, fallirà qui.
-          data = service.files().get_media(fileId=file_id).execute()
-
-          with open("baseline_skus.txt","wb") as f:
-              f.write(data)
-
-          print("Downloaded baseline_skus.txt bytes:", len(data))
-          PY
-
-      - name: Build new_skus_0930.csv (diff vs baseline)
-        if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
+      - name: Build new_skus_0930.csv
+        if: github.event.schedule != '5 0 * * *'
         run: |
           set -e
-          python - << 'PY'
-          import csv
-          from pathlib import Path
+          python build_new_skus.py
+          ls -lh new_skus_0930.csv
+          head -n 2 new_skus_0930.csv | cat
 
-          def detect_delim(text: str) -> str:
-              sample = text[:8192]
-              try:
-                  d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-                  return d.delimiter
-              except Exception:
-                  first = text.splitlines()[0] if text else ""
-                  return ";" if first.count(";") > first.count(",") else ","
-
-          def find_col(header_l, candidates):
-              norm = [h.replace(" ", "_") for h in header_l]
-              for c in candidates:
-                  c0 = c.lower().replace(" ", "_")
-                  for i, h in enumerate(norm):
-                      if h == c0:
-                          return i
-                  for i, h in enumerate(norm):
-                      if c0 in h:
-                          return i
-              return -1
-
-          # 1) carica baseline
-          baseline = set()
-          with open("baseline_skus.txt","r",encoding="utf-8",errors="ignore") as f:
-              for line in f:
-                  s = line.strip()
-                  if s:
-                      baseline.add(s)
-
-          # 2) leggi filtered.csv con delimiter auto
-          raw = Path("filtered.csv").read_bytes()
-          text = raw.decode("utf-8-sig", errors="replace")
-          delim = detect_delim(text)
-
-          reader = csv.reader(text.splitlines(), delimiter=delim)
-          header = next(reader, [])
-          header_l = [h.strip().lower() for h in header]
-
-          sku_i = find_col(header_l, ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"])
-          supplier_i = find_col(header_l, ["supplier_code","supplier","supplierid","supplier_id"])
-          name_i = find_col(header_l, ["titolo_prodotto", "name", "title", "product_name"])
-          qty_i = find_col(header_l, ["quantita", "qty", "quantity", "stock"])
-          cat_i = find_col(header_l, ["cat1", "category", "categoria"])
-          cost_i = find_col(header_l, ["cost","price","base_price","prezzo","net_price"])
-
-          if sku_i < 0:
-              raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
-
-          out_header = ["sku","supplier_code","name","qty","category","cost"]
-          rows_out = 0
-
-          with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
-              w = csv.writer(fout)
-              w.writerow(out_header)
-
-              for row in reader:
-                  if not row or sku_i >= len(row):
-                      continue
-
-                  sku = (row[sku_i] or "").strip()
-                  if not sku or sku in baseline:
-                      continue
-
-                  def get(i):
-                      return (row[i] if i >= 0 and i < len(row) else "").strip()
-
-                  w.writerow([sku, get(supplier_i), get(name_i), get(qty_i), get(cat_i), get(cost_i)])
-                  rows_out += 1
-
-          print("Detected delimiter:", repr(delim))
-          print("Baseline size:", len(baseline))
-          print("New SKUs rows:", rows_out)
-          PY
-
-      - name: Upload new_skus_0930.csv to Google Drive (overwrite by fileId)
-        if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
+      - name: Upload new_skus_0930.csv
+        if: github.event.schedule != '5 0 * * *'
         env:
           NEWSKUS_FILE_ID: ${{ secrets.NEWSKUS_FILE_ID }}
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
+          python upload_csv.py new_skus_0930.csv "$NEWSKUS_FILE_ID"
 
-          file_id = os.environ.get("NEWSKUS_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("NEWSKUS_FILE_ID is empty or missing")
+      # ===============================
+      # AMAZON FEEDS (STEP 5)
+      # ===============================
+      - name: Generate Amazon feeds (B2C / B2B)
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+        run: |
+          set -e
+          python generate_amazon_feeds.py
+          ls -lh amazon_b2c.csv amazon_b2b.csv
+          head -n 3 amazon_b2c.csv | cat
+          head -n 3 amazon_b2b.csv | cat
 
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-
-          media = MediaFileUpload("new_skus_0930.csv", mimetype="text/csv", resumable=True)
-          updated = service.files().update(fileId=file_id, media_body=media).execute()
-
-          print("Updated new_skus file:", updated.get("id"))
-          PY
-
-      - name: Upload artifact (debug)
+      - name: Upload Amazon feeds (artifact debug)
         uses: actions/upload-artifact@v4
         with:
-          name: filtered-feed
-          path: filtered.csv
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Upload artifact (debug new_skus)
-        uses: actions/upload-artifact@v4
-        with:
-          name: new-skus
-          path: new_skus_0930.csv
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Upload artifact (debug baseline)
-        uses: actions/upload-artifact@v4
-        with:
-          name: baseline-skus
-          path: baseline_skus.txt
-          if-no-files-found: warn
+          name: amazon-feeds
+          path: |
+            amazon_b2c.csv
+            amazon_b2b.csv
           retention-days: 3
