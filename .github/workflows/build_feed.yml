@@ -358,7 +358,11 @@ jobs:
           ls -lh amazon_it_b2c.csv amazon_it_b2b.csv
           head -n 2 amazon_it_b2c.csv | cat
           head -n 2 amazon_it_b2b.csv | cat
-
+          
+      - name: Check Amazon IT price+qty file (shows TABs as ^I)
+         run: |
+          head -n 5 amazon_it_price_quantity.txt | cat -A
+ 
       - name: Generate Amazon feeds DE
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
