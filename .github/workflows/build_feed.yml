@@ -344,8 +344,7 @@ jobs:
 
           print("Updated new_skus file:", updated.get("id"))
           PY
-
-           # ===============================
+      # ===============================
       # AMAZON FEEDS MULTI-COUNTRY
       # ===============================
 
@@ -362,7 +361,15 @@ jobs:
 
       - name: Check Amazon IT price+qty file (shows TABs as ^I)
         run: |
+          set -e
           head -n 5 amazon_it_price_quantity.txt | cat -A
+
+      - name: Build Amazon IT Business Pricing (tab-delimited)
+        run: |
+          set -e
+          python make_amazon_business_pricing_it.py amazon_it_b2b.csv amazon_it_business_pricing.txt
+          ls -lh amazon_it_business_pricing.txt
+          head -n 3 amazon_it_business_pricing.txt | cat -A
 
       - name: Generate Amazon feeds DE
         env:
@@ -416,6 +423,14 @@ jobs:
           set -e
           python upload_to_drive.py
 
+      - name: Upload amazon_it_business_pricing.txt to Drive
+        env:
+          FILE_ID: ${{ secrets.AMAZON_IT_BUSINESS_PRICING_FILE_ID }}
+          LOCAL_FILE: amazon_it_business_pricing.txt
+        run: |
+          set -e
+          python upload_to_drive.py
+
       - name: Upload amazon_de_b2c.csv to Drive
         env:
           FILE_ID: ${{ secrets.AMAZON_DE_B2C_FILE_ID }}
@@ -430,67 +445,3 @@ jobs:
           LOCAL_FILE: amazon_de_b2b.csv
         run: |
           set -e
-          python upload_to_drive.py
-
-      - name: Upload amazon_fr_b2c.csv to Drive
-        env:
-          FILE_ID: ${{ secrets.AMAZON_FR_B2C_FILE_ID }}
-          LOCAL_FILE: amazon_fr_b2c.csv
-        run: |
-          set -e
-          python upload_to_drive.py
-
-      - name: Upload amazon_fr_b2b.csv to Drive
-        env:
-          FILE_ID: ${{ secrets.AMAZON_FR_B2B_FILE_ID }}
-          LOCAL_FILE: amazon_fr_b2b.csv
-        run: |
-          set -e
-          python upload_to_drive.py
-
-      - name: Upload amazon_es_b2c.csv to Drive
-        env:
-          FILE_ID: ${{ secrets.AMAZON_ES_B2C_FILE_ID }}
-          LOCAL_FILE: amazon_es_b2c.csv
-        run: |
-          set -e
-          python upload_to_drive.py
-
-      - name: Upload amazon_es_b2b.csv to Drive
-        env:
-          FILE_ID: ${{ secrets.AMAZON_ES_B2B_FILE_ID }}
-          LOCAL_FILE: amazon_es_b2b.csv
-        run: |
-          set -e
-          python upload_to_drive.py
-
-      # ===============================
-      # ARTIFACTS (debug)
-      # ===============================
-
-      - name: Upload artifact (debug pipeline files)
-        uses: actions/upload-artifact@v4
-        with:
-          name: pipeline-files
-          path: |
-            filtered.csv
-            new_skus_0930.csv
-          if-no-files-found: warn
-          retention-days: 3
-
-      - name: Upload artifact (debug amazon feeds multi-country)
-        uses: actions/upload-artifact@v4
-        with:
-          name: amazon-feeds-multi
-          path: |
-            amazon_it_b2c.csv
-            amazon_it_b2b.csv
-            amazon_it_price_quantity.txt
-            amazon_de_b2c.csv
-            amazon_de_b2b.csv
-            amazon_fr_b2c.csv
-            amazon_fr_b2b.csv
-            amazon_es_b2c.csv
-            amazon_es_b2b.csv
-          if-no-files-found: error
-          retention-days: 3
