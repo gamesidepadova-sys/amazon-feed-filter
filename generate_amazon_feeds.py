@@ -91,6 +91,8 @@ def main():
 
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
+    # ✅ nuovo output: file Amazon PriceInventory (prezzo + quantità)
+    out_priceinv = f"amazon_{country}_price_quantity.txt"
 
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
@@ -140,9 +142,11 @@ def main():
 
         rows_b2c = 0
         rows_b2b = 0
+        rows_priceinv = 0
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
-             open(out_b2b, "w", encoding="utf-8", newline="") as f2:
+             open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
+             open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
 
             w1 = csv.DictWriter(f1, fieldnames=["sku", "price_b2c_eur", "qty_available", "country"])
             w2 = csv.DictWriter(f2, fieldnames=[
@@ -152,6 +156,18 @@ def main():
             w1.writeheader()
             w2.writeheader()
 
+            # ✅ Writer Amazon template PriceInventory (TAB-delimited) + header ESATTO
+            w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
+            w3.writerow([
+                "sku",
+                "price",
+                "minimum-seller-allowed-price",
+                "maximum-seller-allowed-price",
+                "quantity",
+                "fulfillment-channel",
+                "handling-time",
+            ])
+
             for row in reader:
                 sku = (row.get("sku") or "").strip()
                 if not sku:
@@ -159,6 +175,10 @@ def main():
 
                 base = to_dec(row.get("prezzo_iva_esclusa"))
                 qty = to_int(row.get("quantita"), 0)
+
+                # opzionale ma utile: evita righe palesemente sporche
+                if qty < 0 or base <= 0:
+                    continue
 
                 b2c = money(base * b2c_mul * vat_mul, round_decimals)
 
@@ -170,6 +190,10 @@ def main():
                         "country": country,
                     })
                     rows_b2c += 1
+
+                    # ✅ riga Amazon (prezzo + qty)
+                    w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", ""])
+                    rows_priceinv += 1
 
                 if sku in pub_b2b:
                     b2b = money(b2c * b2b_mul, round_decimals)
@@ -188,6 +212,7 @@ def main():
 
     print(f"[{country}] Generated {out_b2c} rows={rows_b2c}")
     print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
+    print(f"[{country}] Generated {out_priceinv} rows={rows_priceinv}")
 
 
 if __name__ == "__main__":
