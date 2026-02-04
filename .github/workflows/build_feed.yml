@@ -345,9 +345,10 @@ jobs:
           print("Updated new_skus file:", updated.get("id"))
           PY
 
-      # ===============================
+           # ===============================
       # AMAZON FEEDS MULTI-COUNTRY
       # ===============================
+
       - name: Generate Amazon feeds IT
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
@@ -355,14 +356,14 @@ jobs:
         run: |
           set -e
           python generate_amazon_feeds.py
-          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv
+          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv amazon_it_price_quantity.txt
           head -n 2 amazon_it_b2c.csv | cat
           head -n 2 amazon_it_b2b.csv | cat
-          
+
       - name: Check Amazon IT price+qty file (shows TABs as ^I)
-         run: |
+        run: |
           head -n 5 amazon_it_price_quantity.txt | cat -A
- 
+
       - name: Generate Amazon feeds DE
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
@@ -388,30 +389,16 @@ jobs:
           python generate_amazon_feeds.py
 
       # ===============================
-      # UPLOAD AMAZON FEEDS (8 files overwrite)
+      # UPLOAD AMAZON FEEDS (overwrite)
       # ===============================
+
       - name: Upload amazon_it_b2c.csv to Drive
         env:
           FILE_ID: ${{ secrets.AMAZON_IT_B2C_FILE_ID }}
           LOCAL_FILE: amazon_it_b2c.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       - name: Upload amazon_it_b2b.csv to Drive
         env:
@@ -419,22 +406,15 @@ jobs:
           LOCAL_FILE: amazon_it_b2b.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
+          python upload_to_drive.py
 
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+      - name: Upload amazon_it_price_quantity.txt to Drive
+        env:
+          FILE_ID: ${{ secrets.AMAZON_IT_PRICE_QTY_FILE_ID }}
+          LOCAL_FILE: amazon_it_price_quantity.txt
+        run: |
+          set -e
+          python upload_to_drive.py
 
       - name: Upload amazon_de_b2c.csv to Drive
         env:
@@ -442,22 +422,7 @@ jobs:
           LOCAL_FILE: amazon_de_b2c.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       - name: Upload amazon_de_b2b.csv to Drive
         env:
@@ -465,22 +430,7 @@ jobs:
           LOCAL_FILE: amazon_de_b2b.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       - name: Upload amazon_fr_b2c.csv to Drive
         env:
@@ -488,22 +438,7 @@ jobs:
           LOCAL_FILE: amazon_fr_b2c.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       - name: Upload amazon_fr_b2b.csv to Drive
         env:
@@ -511,22 +446,7 @@ jobs:
           LOCAL_FILE: amazon_fr_b2b.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       - name: Upload amazon_es_b2c.csv to Drive
         env:
@@ -534,22 +454,7 @@ jobs:
           LOCAL_FILE: amazon_es_b2c.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       - name: Upload amazon_es_b2b.csv to Drive
         env:
@@ -557,26 +462,12 @@ jobs:
           LOCAL_FILE: amazon_es_b2b.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ["FILE_ID"].strip()
-          local_file = os.environ["LOCAL_FILE"].strip()
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json", scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload(local_file, mimetype="text/csv", resumable=True)
-          service.files().update(fileId=file_id, media_body=media).execute()
-          print("Uploaded", local_file)
-          PY
+          python upload_to_drive.py
 
       # ===============================
       # ARTIFACTS (debug)
       # ===============================
+
       - name: Upload artifact (debug pipeline files)
         uses: actions/upload-artifact@v4
         with:
@@ -594,6 +485,7 @@ jobs:
           path: |
             amazon_it_b2c.csv
             amazon_it_b2b.csv
+            amazon_it_price_quantity.txt
             amazon_de_b2c.csv
             amazon_de_b2b.csv
             amazon_fr_b2c.csv
