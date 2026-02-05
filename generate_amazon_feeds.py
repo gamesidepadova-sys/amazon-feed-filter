@@ -80,6 +80,46 @@ def get_setting(settings: Dict[str, str], key: str, country: str, default: str) 
     return default
 
 
+# ----------------------------
+# Suppliers -> handling-time
+# ----------------------------
+def _norm_bool(x: Any) -> bool:
+    s = str(x or "").strip().lower()
+    return s in {"1", "true", "yes", "y"}
+
+
+def load_supplier_handling_max_days(path: str = "suppliers.csv") -> Dict[str, int]:
+    """
+    supplier_code -> lead_b2c_max_days (int), only active suppliers.
+    """
+    out: Dict[str, int] = {}
+    try:
+        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                code = (row.get("supplier_code") or "").strip()
+                if not code:
+                    continue
+                if not _norm_bool(row.get("active")):
+                    continue
+                v = (row.get("lead_b2c_max_days") or "").strip()
+                if not v:
+                    continue
+                try:
+                    out[code] = int(str(v).strip())
+                except Exception:
+                    continue
+    except FileNotFoundError:
+        return {}
+    return out
+
+
+def supplier_code_from_sku(sku: str) -> str:
+    # SKU format: T_0372_xxx -> supplier = 0372
+    parts = (sku or "").split("_")
+    return parts[1].strip() if len(parts) >= 2 else ""
+
+
 def main():
     spreadsheet_id = os.environ.get("GSHEET_ID", "").strip()
     if not spreadsheet_id:
@@ -93,6 +133,10 @@ def main():
     out_b2b = f"amazon_{country}_b2b.csv"
     # ✅ nuovo output: file Amazon PriceInventory (prezzo + quantità)
     out_priceinv = f"amazon_{country}_price_quantity.txt"
+
+    # ✅ supplier handling-time
+    supplier_handling = load_supplier_handling_max_days("suppliers.csv")
+    DEFAULT_HANDLING_DAYS = 2
 
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
@@ -191,8 +235,14 @@ def main():
                     })
                     rows_b2c += 1
 
-                    # ✅ riga Amazon (prezzo + qty)
-                    w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", ""])
+                    # ✅ handling-time per fornitore (fallback default)
+                    sup = supplier_code_from_sku(sku)
+                    handling_days = supplier_handling.get(sup, DEFAULT_HANDLING_DAYS)
+                    if sup and sup not in supplier_handling:
+                        print(f"WARNING: supplier_code {sup} not found in suppliers.csv -> using default {DEFAULT_HANDLING_DAYS}")
+
+                    # ✅ riga Amazon (prezzo + qty + handling-time)
+                    w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling_days)])
                     rows_priceinv += 1
 
                 if sku in pub_b2b:
