@@ -76,9 +76,9 @@ def get_cell(row: List[str], idx: Dict[str, int], key: str, default: str = "") -
 
 
 def get_setting(settings: Dict[str, str], key: str, country: str, default: str) -> str:
-    target1 = f"{key}_{country}".lower()
+    key_country = f"{key}_{country}".lower()
     for k, v in settings.items():
-        if k.lower() == target1:
+        if k.lower() == key_country:
             return v
     for k, v in settings.items():
         if k.lower() == key.lower():
@@ -107,8 +107,12 @@ def load_supplier_handling_max_days(path: str) -> Dict[str, int]:
                 if not _norm_bool(row.get("active")):
                     continue
                 code = (row.get("supplier_code") or "").strip()
-                if code:
+                if not code:
+                    continue
+                try:
                     out[code] = int(row.get("lead_b2c_max_days", 2))
+                except Exception:
+                    out[code] = 2
     except FileNotFoundError:
         pass
     return out
@@ -121,6 +125,8 @@ def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
             r = csv.DictReader(f)
             for row in r:
                 code = (row.get("supplier_code") or "").strip()
+                if not code:
+                    continue
                 try:
                     out[code] = Decimal(str(row.get("ship_cost_b2c_eur")).replace(",", "."))
                 except Exception:
@@ -134,8 +140,11 @@ def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
 # MAIN
 # ----------------------------
 def main():
-    spreadsheet_id = os.environ["GSHEET_ID"]
-    country = os.environ.get("COUNTRY", "it").lower()
+    spreadsheet_id = os.environ.get("GSHEET_ID", "").strip()
+    if not spreadsheet_id:
+        raise RuntimeError("GSHEET_ID missing")
+
+    country = os.environ.get("COUNTRY", "it").strip().lower()
 
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
@@ -152,13 +161,14 @@ def main():
 
     settings = kv_settings(read_sheet(sheets, spreadsheet_id, SHEET_SETTINGS))
 
-    vat_mul = Decimal("1") + to_dec(get_setting(settings, "vat_rate_pct", country, "20")) / 100
+    vat_mul = Decimal("1") + to_dec(get_setting(settings, "vat_rate_pct", country, "22")) / 100
     b2c_mul = Decimal("1") + to_dec(get_setting(settings, "b2c_markup_pct", country, "28")) / 100
     b2b_mul = Decimal("1") - to_dec(get_setting(settings, "b2b_discount_vs_b2c_pct", country, "7")) / 100
     qty2_mul = Decimal("1") - to_dec(get_setting(settings, "qty2_discount_vs_b2c_pct", country, "8")) / 100
     qty4_mul = Decimal("1") - to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9")) / 100
     round_decimals = int(get_setting(settings, "price_round_decimals", country, "2"))
 
+    # ---- selezione ----
     sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
     sel_idx = build_index(sel_rows[0])
 
@@ -170,37 +180,61 @@ def main():
         if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
             pub_b2b.add(sku)
 
+    # ---- filtered.csv ----
     with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
-    first = fin.readline()
-    fin.seek(0)
-    delim = "\t" if "\t" in first else ("|" if "|" in first else (";" if ";" in first else ","))
-    reader = csv.DictReader(fin, delimiter=delim)
-        with open(out_b2c, "w", newline="", encoding="utf-8") as f1, \
-             open(out_b2b, "w", newline="", encoding="utf-8") as f2, \
-             open(out_priceinv, "w", newline="", encoding="utf-8") as f3:
+        first = fin.readline()
+        fin.seek(0)
+
+        if "\t" in first:
+            delim = "\t"
+        elif "|" in first:
+            delim = "|"
+        elif ";" in first:
+            delim = ";"
+        else:
+            delim = ","
+
+        reader = csv.DictReader(fin, delimiter=delim)
+        if not reader.fieldnames:
+            raise RuntimeError("filtered.csv has no header")
+
+        with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
+             open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
+             open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
 
             w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
             w2 = csv.DictWriter(f2, [
                 "sku", "price_b2c_eur", "price_b2b_eur",
                 "qty2_price_eur", "qty4_price_eur", "qty_available", "country"
             ])
-            w3 = csv.writer(f3, delimiter="\t")
+            w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
 
             w1.writeheader()
             w2.writeheader()
             w3.writerow([
-                "sku","price","","","quantity","fulfillment-channel","handling-time"
+                "sku",
+                "price",
+                "minimum-seller-allowed-price",
+                "maximum-seller-allowed-price",
+                "quantity",
+                "fulfillment-channel",
+                "handling-time",
             ])
 
             for row in reader:
-                sku = row["sku"].strip()
+                sku = (row.get("sku") or "").strip()
+                if not sku:
+                    continue
                 if sku not in pub_b2c and sku not in pub_b2b:
                     continue
 
-                base = to_dec(row["prezzo_iva_esclusa"])
-                qty = to_int(row["quantita"])
-                sup = supplier_code_from_sku(sku)
+                base = to_dec(row.get("prezzo_iva_esclusa"))
+                qty = to_int(row.get("quantita"))
 
+                if base <= 0 or qty < 0:
+                    continue
+
+                sup = supplier_code_from_sku(sku)
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
