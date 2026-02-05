@@ -1,0 +1,7 @@
+supplier_code,supplier_name,active,lead_b2c_min_days,lead_b2c_max_days,lead_b2b_min_days,lead_b2b_max_days,ship_cost_b2c_eur,ship_cost_b2b_eur,price_markup_b2c_pct,price_markup_b2b_pct
+0373,NO FRA,YES,2,2,2,2,0,0,28,28
+0374,NO GER,YES,2,2,2,2,12,12,28,28
+0372,Everit (NO GER),YES,5,5,5,5,14,14,28,28
+0380,NO GER,YES,6,6,6,6,14,14,28,28
+0381,BIGBUY NO SPA,YES,5,5,5,5,12,12,28,28
+0383,SOLO ITA,YES,5,5,5,5,14,14,28,28
