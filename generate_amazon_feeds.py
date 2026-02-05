@@ -170,8 +170,11 @@ def main():
         if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
             pub_b2b.add(sku)
 
-    with open(INPUT_FILTERED, encoding="utf-8-sig") as fin:
-        reader = csv.DictReader(fin)
+    with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
+    first = fin.readline()
+    fin.seek(0)
+    delim = "\t" if "\t" in first else ("|" if "|" in first else (";" if ";" in first else ","))
+    reader = csv.DictReader(fin, delimiter=delim)
         with open(out_b2c, "w", newline="", encoding="utf-8") as f1, \
              open(out_b2b, "w", newline="", encoding="utf-8") as f2, \
              open(out_priceinv, "w", newline="", encoding="utf-8") as f3:
