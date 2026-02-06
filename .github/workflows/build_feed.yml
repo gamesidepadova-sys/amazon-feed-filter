@@ -172,13 +172,11 @@ jobs:
       - name: Upload baseline_skus.txt to Google Drive (overwrite by fileId)
         if: github.event_name == 'schedule' && github.event.schedule == '5 0 * * *'
         env:
-          BASELINE_FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
+          FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
+          LOCAL_FILE: baseline_skus.txt
         run: |
           set -e
           python upload_to_drive.py
-        env:
-          FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
-          LOCAL_FILE: baseline_skus.txt
 
       # ===============================
       # DIFF: every 15 min (and manual)
