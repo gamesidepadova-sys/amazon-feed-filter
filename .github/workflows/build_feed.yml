@@ -22,18 +22,18 @@ jobs:
           set -e
           echo "PWD=$(pwd)"
           ls -lah
-          echo "Find generate_amazon*:"
-          find . -maxdepth 3 -type f -name "generate_amazon*" -print
-
+          echo "Find key scripts:"
+          find . -maxdepth 2 -type f -name "generate_amazon_feeds.py" -o -name "filter_feed.py" -o -name "upload_to_drive.py" -o -name "publish_spapi_feed.py" -print
 
       # ===============================
-      # INSTALL DEPS (moved up)
+      # INSTALL DEPS
       # ===============================
-      - name: Install Google API deps
+      - name: Install Python deps (Google + SP-API)
         run: |
           set -e
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
+          pip install requests botocore
 
       # ===============================
       # DOWNLOAD SOURCE
@@ -63,7 +63,7 @@ jobs:
           head -n 2 filtered.csv | cat
 
       # ===============================
-      # SERVICE ACCOUNT
+      # SERVICE ACCOUNT (Drive + Sheets)
       # ===============================
       - name: Write service account JSON to file
         env:
@@ -74,9 +74,7 @@ jobs:
             echo "GDRIVE_SA_JSON secret is empty or missing"
             exit 1
           fi
-
           echo "$GDRIVE_SA_JSON" > sa.json
-
           python - << 'PY'
           import json
           with open("sa.json","r",encoding="utf-8") as f:
@@ -107,10 +105,8 @@ jobs:
               scopes=["https://www.googleapis.com/auth/drive"]
           )
           service = build("drive", "v3", credentials=creds)
-
           media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
           updated = service.files().update(fileId=file_id, media_body=media).execute()
-
           print("Updated Drive file:", updated.get("id"))
           PY
 
@@ -149,11 +145,10 @@ jobs:
           raw = Path("filtered.csv").read_bytes()
           text = raw.decode("utf-8-sig", errors="replace")
           delim = detect_delim(text)
-
           reader = csv.reader(text.splitlines(), delimiter=delim)
+
           header = next(reader, [])
           header_l = [h.strip().lower() for h in header]
-
           sku_i = find_col(header_l, ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"])
           if sku_i < 0:
               raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
@@ -180,27 +175,10 @@ jobs:
           BASELINE_FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ.get("BASELINE_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("BASELINE_FILE_ID is empty or missing")
-
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-
-          media = MediaFileUpload("baseline_skus.txt", mimetype="text/plain", resumable=True)
-          updated = service.files().update(fileId=file_id, media_body=media).execute()
-
-          print("Updated baseline file:", updated.get("id"))
-          PY
+          python upload_to_drive.py
+        env:
+          FILE_ID: ${{ secrets.BASELINE_FILE_ID }}
+          LOCAL_FILE: baseline_skus.txt
 
       # ===============================
       # DIFF: every 15 min (and manual)
@@ -229,7 +207,6 @@ jobs:
           data = service.files().get_media(fileId=file_id).execute()
           with open("baseline_skus.txt","wb") as f:
               f.write(data)
-
           print("Downloaded baseline_skus.txt bytes:", len(data))
           PY
 
@@ -320,34 +297,15 @@ jobs:
       - name: Upload new_skus_0930.csv to Google Drive (overwrite by fileId)
         if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
         env:
-          NEWSKUS_FILE_ID: ${{ secrets.NEWSKUS_FILE_ID }}
+          FILE_ID: ${{ secrets.NEWSKUS_FILE_ID }}
+          LOCAL_FILE: new_skus_0930.csv
         run: |
           set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
+          python upload_to_drive.py
 
-          file_id = os.environ.get("NEWSKUS_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("NEWSKUS_FILE_ID is empty or missing")
-
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-
-          media = MediaFileUpload("new_skus_0930.csv", mimetype="text/csv", resumable=True)
-          updated = service.files().update(fileId=file_id, media_body=media).execute()
-
-          print("Updated new_skus file:", updated.get("id"))
-          PY
       # ===============================
       # AMAZON FEEDS MULTI-COUNTRY
       # ===============================
-
       - name: Generate Amazon feeds IT
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
@@ -355,29 +313,18 @@ jobs:
         run: |
           set -e
           python generate_amazon_feeds.py
-          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv amazon_it_price_quantity.txt
-          head -n 2 amazon_it_b2c.csv | cat
-          head -n 2 amazon_it_b2b.csv | cat
+          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv amazon_it_price_quantity.txt amazon_it_business_pricing.txt || true
+          head -n 2 amazon_it_price_quantity.txt | cat -A
+          head -n 2 amazon_it_business_pricing.txt | cat -A || true
 
-      - name: Check Amazon IT price+qty file (shows TABs as ^I)
-        run: |
-          set -e
-          head -n 5 amazon_it_price_quantity.txt | cat -A
-
-      - name: Build Amazon IT Business Pricing (tab-delimited)
-        run: |
-          set -e
-          python make_amazon_business_pricing_it.py amazon_it_b2b.csv amazon_it_business_pricing.txt
-          ls -lh amazon_it_business_pricing.txt
-          head -n 3 amazon_it_business_pricing.txt | cat -A
-
+      # (opzionale) DE/FR/ES come già avevi...
       - name: Generate Amazon feeds DE
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           COUNTRY: de
         run: |
           set -e
-          python generate_amazon_feeds.py
+          python generate_amazon_feeds.py || true
 
       - name: Generate Amazon feeds FR
         env:
@@ -385,7 +332,7 @@ jobs:
           COUNTRY: fr
         run: |
           set -e
-          python generate_amazon_feeds.py
+          python generate_amazon_feeds.py || true
 
       - name: Generate Amazon feeds ES
         env:
@@ -393,28 +340,44 @@ jobs:
           COUNTRY: es
         run: |
           set -e
-          python generate_amazon_feeds.py
+          python generate_amazon_feeds.py || true
 
       # ===============================
-      # UPLOAD AMAZON FEEDS (overwrite)
+      # SP-API (SANDBOX/PROD) SEND FEEDS (IT)
       # ===============================
-
-      - name: Upload amazon_it_b2c.csv to Drive
+      - name: Send Amazon IT Price+Qty feed (SP-API)
         env:
-          FILE_ID: ${{ secrets.AMAZON_IT_B2C_FILE_ID }}
-          LOCAL_FILE: amazon_it_b2c.csv
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          python upload_to_drive.py
+          python publish_spapi_feed.py \
+            --file amazon_it_price_quantity.txt \
+            --feed-type POST_FLAT_FILE_PRICEANDQUANTITYONLY_UPDATE_DATA \
+            --marketplace APJ6JRA9NG5V4
 
-      - name: Upload amazon_it_b2b.csv to Drive
+      - name: Send Amazon IT Business Pricing feed (SP-API)
         env:
-          FILE_ID: ${{ secrets.AMAZON_IT_B2B_FILE_ID }}
-          LOCAL_FILE: amazon_it_b2b.csv
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          python upload_to_drive.py
+          python publish_spapi_feed.py \
+            --file amazon_it_business_pricing.txt \
+            --feed-type POST_FLAT_FILE_BUSINESS_PRICING_DATA \
+            --marketplace APJ6JRA9NG5V4
 
+      # ===============================
+      # UPLOAD AMAZON FEEDS TO DRIVE (overwrite) - keep as backup
+      # ===============================
       - name: Upload amazon_it_price_quantity.txt to Drive
         env:
           FILE_ID: ${{ secrets.AMAZON_IT_PRICE_QTY_FILE_ID }}
@@ -425,23 +388,31 @@ jobs:
 
       - name: Upload amazon_it_business_pricing.txt to Drive
         env:
-          FILE_ID: ${{ secrets.AMAZON_IT_BUSINESS_PRICING_FILE_ID }}
+          FILE_ID: ${{ secrets.AMAZON_IT_BUSINESS_FILE_ID }}
           LOCAL_FILE: amazon_it_business_pricing.txt
         run: |
           set -e
           python upload_to_drive.py
 
-      - name: Upload amazon_de_b2c.csv to Drive
-        env:
-          FILE_ID: ${{ secrets.AMAZON_DE_B2C_FILE_ID }}
-          LOCAL_FILE: amazon_de_b2c.csv
-        run: |
-          set -e
-          python upload_to_drive.py
+      # ===============================
+      # ARTIFACTS (debug)
+      # ===============================
+      - name: Upload artifact (debug pipeline files)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-files
+          path: |
+            filtered.csv
+            new_skus_0930.csv
+          if-no-files-found: warn
+          retention-days: 3
 
-      - name: Upload amazon_de_b2b.csv to Drive
-        env:
-          FILE_ID: ${{ secrets.AMAZON_DE_B2B_FILE_ID }}
-          LOCAL_FILE: amazon_de_b2b.csv
-        run: |
-          set -e
+      - name: Upload artifact (debug amazon feeds)
+        uses: actions/upload-artifact@v4
+        with:
+          name: amazon-feeds
+          path: |
+            amazon_it_price_quantity.txt
+            amazon_it_business_pricing.txt
+          if-no-files-found: warn
+          retention-days: 3
