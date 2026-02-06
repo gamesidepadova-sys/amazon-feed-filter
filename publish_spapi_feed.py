@@ -27,28 +27,61 @@ def lwa_access_token() -> str:
         },
         timeout=60,
     )
+    if r.status_code >= 400:
+        print("LWA ERROR STATUS:", r.status_code, file=sys.stderr)
+        print("LWA ERROR BODY:", r.text[:2000], file=sys.stderr)
     r.raise_for_status()
     return r.json()["access_token"]
 
 
-def signed_json(method: str, url: str, region: str, access_token: str, body: dict):
-    aws_access_key = os.environ["AWS_ACCESS_KEY_ID"]
-    aws_secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
-
-    headers = {
+def _aws_headers(region: str, access_token: str) -> dict:
+    return {
         "x-amz-access-token": access_token,
         "content-type": "application/json",
         "accept": "application/json",
         "host": "sellingpartnerapi-eu.amazon.com",
     }
 
+
+def signed_json(method: str, url: str, region: str, access_token: str, body: dict) -> dict:
+    aws_access_key = os.environ["AWS_ACCESS_KEY_ID"]
+    aws_secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+
     data = json.dumps(body).encode("utf-8")
+    headers = _aws_headers(region, access_token)
+
     req = AWSRequest(method=method, url=url, data=data, headers=headers)
     SigV4Auth(Credentials(aws_access_key, aws_secret_key), SERVICE, region).add_auth(req)
 
-    resp = requests.request(method, url, data=req.data, headers=dict(req.headers), timeout=120)
+    resp = requests.request(
+        method,
+        url,
+        data=req.data,
+        headers=dict(req.headers),
+        timeout=120,
+    )
+
+    if resp.status_code >= 400:
+        rid = resp.headers.get("x-amzn-RequestId") or resp.headers.get("x-amz-request-id") or ""
+        print("SP-API ERROR URL:", url, file=sys.stderr)
+        print("SP-API ERROR STATUS:", resp.status_code, file=sys.stderr)
+        if rid:
+            print("SP-API REQUEST ID:", rid, file=sys.stderr)
+        ctype = resp.headers.get("content-type", "")
+        print("SP-API ERROR content-type:", ctype, file=sys.stderr)
+        # prova JSON, altrimenti testo
+        try:
+            j = resp.json()
+            print("SP-API ERROR JSON:", json.dumps(j)[:4000], file=sys.stderr)
+        except Exception:
+            print("SP-API ERROR BODY:", resp.text[:4000], file=sys.stderr)
+
     resp.raise_for_status()
-    return resp.json()
+
+    # OK path
+    if resp.text.strip():
+        return resp.json()
+    return {}
 
 
 def create_feed_document(region: str, access_token: str, content_type: str) -> dict:
@@ -60,6 +93,9 @@ def upload_document(upload_url: str, file_path: str, content_type: str):
     with open(file_path, "rb") as f:
         data = f.read()
     r = requests.put(upload_url, data=data, headers={"content-type": content_type}, timeout=300)
+    if r.status_code >= 400:
+        print("UPLOAD ERROR STATUS:", r.status_code, file=sys.stderr)
+        print("UPLOAD ERROR BODY:", r.text[:2000], file=sys.stderr)
     r.raise_for_status()
 
 
