@@ -27,14 +27,17 @@ def lwa_access_token() -> str:
         },
         timeout=60,
     )
+
     if r.status_code >= 400:
         print("LWA ERROR STATUS:", r.status_code, file=sys.stderr)
         print("LWA ERROR BODY:", r.text[:2000], file=sys.stderr)
+
     r.raise_for_status()
     return r.json()["access_token"]
 
 
 def _aws_headers(region: str, access_token: str) -> dict:
+    # NOTE: host must match endpoint domain
     return {
         "x-amz-access-token": access_token,
         "content-type": "application/json",
@@ -43,12 +46,19 @@ def _aws_headers(region: str, access_token: str) -> dict:
     }
 
 
-def signed_json(method: str, url: str, region: str, access_token: str, body: dict) -> dict:
+def signed_json(method: str, url: str, region: str, access_token: str, body):
+    """
+    Signed SP-API call (supports GET with body=None).
+    Prints rich error details when status >= 400.
+    """
     aws_access_key = os.environ["AWS_ACCESS_KEY_ID"]
     aws_secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
 
-    data = json.dumps(body).encode("utf-8")
     headers = _aws_headers(region, access_token)
+
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
 
     req = AWSRequest(method=method, url=url, data=data, headers=headers)
     SigV4Auth(Credentials(aws_access_key, aws_secret_key), SERVICE, region).add_auth(req)
@@ -67,18 +77,14 @@ def signed_json(method: str, url: str, region: str, access_token: str, body: dic
         print("SP-API ERROR STATUS:", resp.status_code, file=sys.stderr)
         if rid:
             print("SP-API REQUEST ID:", rid, file=sys.stderr)
-        ctype = resp.headers.get("content-type", "")
-        print("SP-API ERROR content-type:", ctype, file=sys.stderr)
-        # prova JSON, altrimenti testo
+        print("SP-API ERROR content-type:", resp.headers.get("content-type", ""), file=sys.stderr)
         try:
-            j = resp.json()
-            print("SP-API ERROR JSON:", json.dumps(j)[:4000], file=sys.stderr)
+            print("SP-API ERROR JSON:", json.dumps(resp.json())[:4000], file=sys.stderr)
         except Exception:
             print("SP-API ERROR BODY:", resp.text[:4000], file=sys.stderr)
 
     resp.raise_for_status()
 
-    # OK path
     if resp.text.strip():
         return resp.json()
     return {}
@@ -92,10 +98,13 @@ def create_feed_document(region: str, access_token: str, content_type: str) -> d
 def upload_document(upload_url: str, file_path: str, content_type: str):
     with open(file_path, "rb") as f:
         data = f.read()
+
     r = requests.put(upload_url, data=data, headers={"content-type": content_type}, timeout=300)
+
     if r.status_code >= 400:
         print("UPLOAD ERROR STATUS:", r.status_code, file=sys.stderr)
         print("UPLOAD ERROR BODY:", r.text[:2000], file=sys.stderr)
+
     r.raise_for_status()
 
 
@@ -115,6 +124,7 @@ def main():
     ap.add_argument("--feed-type", required=True)
     ap.add_argument("--marketplace", action="append", required=True)
     ap.add_argument("--content-type", default="text/tab-separated-values; charset=UTF-8")
+    ap.add_argument("--skip-sellers-check", action="store_true", help="Skip Sellers API authorization check")
     args = ap.parse_args()
 
     region = os.environ.get("AWS_REGION", "eu-west-1")
@@ -125,17 +135,33 @@ def main():
 
     access_token = lwa_access_token()
 
+    # ---- DEBUG / Authorization check (PROD sanity) ----
+    # This confirms whether the app+token can call a basic SP-API resource.
+    # If this fails with 401/403, you're not authorized in production (or token is sandbox/mismatch).
+    if not args.skip_sellers_check:
+        mp = signed_json(
+            "GET",
+            f"{EU_ENDPOINT}/sellers/v1/marketplaceParticipations",
+            region,
+            access_token,
+            None,
+        )
+        print("MarketplaceParticipations OK:", json.dumps(mp)[:800])
+
+    # ---- Feed document creation + upload ----
     doc = create_feed_document(region, access_token, args.content_type)
     feed_document_id = doc["feedDocumentId"]
     upload_url = doc["url"]
 
     upload_document(upload_url, args.file, args.content_type)
 
+    # ---- Create feed ----
     feed = create_feed(region, access_token, args.feed_type, args.marketplace, feed_document_id)
 
     print("Created feed:", json.dumps(feed))
     print("feedType:", args.feed_type)
     print("file:", args.file)
+    print("marketplaceIds:", args.marketplace)
 
 
 if __name__ == "__main__":
