@@ -259,11 +259,17 @@ jobs:
           cat_i = find_col(header_l, ["cat1","category","categoria"])
           cost_i = find_col(header_l, ["prezzo_iva_esclusa","cost","price","base_price","prezzo","net_price"])
 
+          # ✅ EAN / barcode / gtin
+          ean_i = find_col(header_l, ["ean","ean_code","barcode","gtin","gtin13","ean13","product_ean","product_ean_code"])
+
           if sku_i < 0:
               raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
 
-          out_header = ["sku","supplier_code","name","qty","category","cost"]
+          out_header = ["sku","ean","supplier_code","name","qty","category","cost"]
           rows_out = 0
+
+          def get(row, i):
+              return (row[i] if i >= 0 and i < len(row) else "").strip()
 
           with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
               w = csv.writer(fout)
@@ -272,23 +278,23 @@ jobs:
               for row in reader:
                   if not row or sku_i >= len(row):
                       continue
-                  sku = (row[sku_i] or "").strip()
+                  sku = get(row, sku_i)
                   if not sku or sku in baseline:
                       continue
 
-                  def get(i):
-                      return (row[i] if i >= 0 and i < len(row) else "").strip()
-
-                  supplier = get(supplier_i)
+                  supplier = get(row, supplier_i)
                   if not supplier:
                       parts = sku.split("_")
                       supplier = parts[1] if len(parts) >= 2 else ""
 
-                  w.writerow([sku, supplier, get(name_i), get(qty_i), get(cat_i), get(cost_i)])
+                  ean = get(row, ean_i)
+
+                  w.writerow([sku, ean, supplier, get(row, name_i), get(row, qty_i), get(row, cat_i), get(row, cost_i)])
                   rows_out += 1
 
           print("Detected delimiter:", repr(delim))
           print("Baseline size:", len(baseline))
+          print("EAN column index:", ean_i)
           print("New SKUs rows:", rows_out)
           PY
 
