@@ -349,7 +349,12 @@ jobs:
       # ===============================
       # SP-API (SANDBOX/PROD) SEND FEEDS (IT)
       # ===============================
-      - name: Send Amazon IT Price+Qty feed (SP-API)
+     
+            # ===============================
+      # AMAZON IT – SP-API FEEDS
+      # ===============================
+
+      - name: Send Amazon IT Price + Quantity feed (SP-API)
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -378,6 +383,15 @@ jobs:
             --file amazon_it_business_pricing.txt \
             --feed-type POST_FLAT_FILE_BUSINESS_PRICING_DATA \
             --marketplace APJ6JRA9NG5V4
+
+      - name: Upload SP-API request/response dump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spapi-request-response
+          path: spapi_request_response.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       # ===============================
       # UPLOAD AMAZON FEEDS TO DRIVE (overwrite) - keep as backup
