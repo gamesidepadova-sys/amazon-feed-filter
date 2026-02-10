@@ -46,10 +46,22 @@ def _aws_headers(region: str, access_token: str) -> dict:
     }
 
 
+def _sanitize_headers(h: dict) -> dict:
+    out = {}
+    for k, v in (h or {}).items():
+        kl = str(k).lower()
+        if kl in {"authorization", "x-amz-access-token"}:
+            out[k] = "***REDACTED***"
+        else:
+            out[k] = v
+    return out
+
+
 def signed_json(method: str, url: str, region: str, access_token: str, body):
     """
     Signed SP-API call (supports GET with body=None).
-    Prints rich error details when status >= 400.
+    On error, writes full request/response dump to spapi_request_response.txt
+    (sanitizing tokens).
     """
     aws_access_key = os.environ["AWS_ACCESS_KEY_ID"]
     aws_secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
@@ -57,22 +69,60 @@ def signed_json(method: str, url: str, region: str, access_token: str, body):
     headers = _aws_headers(region, access_token)
 
     data = None
+    body_text = ""
     if body is not None:
-        data = json.dumps(body).encode("utf-8")
+        body_text = json.dumps(body, ensure_ascii=False)
+        data = body_text.encode("utf-8")
 
     req = AWSRequest(method=method, url=url, data=data, headers=headers)
     SigV4Auth(Credentials(aws_access_key, aws_secret_key), SERVICE, region).add_auth(req)
+
+    req_headers = dict(req.headers)
 
     resp = requests.request(
         method,
         url,
         data=req.data,
-        headers=dict(req.headers),
+        headers=req_headers,
         timeout=120,
     )
 
     if resp.status_code >= 400:
+        dump_path = "spapi_request_response.txt"
         rid = resp.headers.get("x-amzn-RequestId") or resp.headers.get("x-amz-request-id") or ""
+
+        with open(dump_path, "w", encoding="utf-8") as f:
+            f.write("=== REQUEST ===\n")
+            f.write(f"Endpoint: {url}\n")
+            f.write(f"Method: {method}\n\n")
+
+            f.write("Request headers:\n")
+            json.dump(_sanitize_headers(req_headers), f, ensure_ascii=False, indent=2)
+            f.write("\n\n")
+
+            if body is not None:
+                f.write("Request body:\n")
+                f.write(body_text)
+                f.write("\n\n")
+            else:
+                f.write("Request body: <none>\n\n")
+
+            f.write("=== RESPONSE ===\n")
+            f.write(f"Status: {resp.status_code}\n")
+            if rid:
+                f.write(f"RequestId: {rid}\n")
+            f.write(f"Content-Type: {resp.headers.get('content-type','')}\n\n")
+
+            f.write("Response headers:\n")
+            json.dump(_sanitize_headers(dict(resp.headers)), f, ensure_ascii=False, indent=2)
+            f.write("\n\n")
+
+            f.write("Response body:\n")
+            f.write(resp.text)
+            f.write("\n")
+
+        print("Wrote SP-API request/response dump to:", dump_path, file=sys.stderr)
+
         print("SP-API ERROR URL:", url, file=sys.stderr)
         print("SP-API ERROR STATUS:", resp.status_code, file=sys.stderr)
         if rid:
@@ -88,6 +138,7 @@ def signed_json(method: str, url: str, region: str, access_token: str, body):
     if resp.text.strip():
         return resp.json()
     return {}
+
 
 
 def create_feed_document(region: str, access_token: str, content_type: str) -> dict:
