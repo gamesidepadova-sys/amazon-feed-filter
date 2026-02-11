@@ -370,6 +370,22 @@ jobs:
             --file amazon_it_price_quantity.txt \
             --feed-type POST_FLAT_FILE_PRICEANDQUANTITYONLY_UPDATE_DATA \
             --marketplace APJ6JRA9NG5V4
+            
+      - name: Send Amazon IT Listings feed (SP-API) [JSON_LISTINGS_FEED]
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          python publish_spapi_feed.py \
+            --file amazon_it_listings.json \
+            --feed-type JSON_LISTINGS_FEED \
+            --marketplace APJ6JRA9NG5V4 \
+            --content-type application/json
 
       - name: Send Amazon IT Business Pricing feed (SP-API)
         env:
