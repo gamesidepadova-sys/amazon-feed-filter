@@ -308,8 +308,9 @@ jobs:
           python upload_to_drive.py
 
       # ===============================
-      # AMAZON FEEDS MULTI-COUNTRY
+      # GENERATE AMAZON FEEDS
       # ===============================
+
       - name: Generate Amazon feeds IT
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
@@ -317,46 +318,14 @@ jobs:
         run: |
           set -e
           python generate_amazon_feeds.py
-          echo "Generated files:"
-          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv amazon_it_price_quantity.txt amazon_it_listings.json
-          echo "Listings JSON preview:"
-          head -n 30 amazon_it_listings.json | cat
-
-      # (opzionale) DE/FR/ES come già avevi...
-      - name: Generate Amazon feeds DE
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: de
-        run: |
-          set -e
-          python generate_amazon_feeds.py || true
-
-      - name: Generate Amazon feeds FR
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: fr
-        run: |
-          set -e
-          python generate_amazon_feeds.py || true
-
-      - name: Generate Amazon feeds ES
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: es
-        run: |
-          set -e
-          python generate_amazon_feeds.py || true
+          ls -lh amazon_it_*
 
       # ===============================
-      # SP-API (SANDBOX/PROD) SEND FEEDS (IT)
-      # ===============================
-     
-            # ===============================
-      # AMAZON IT – SP-API FEEDS
+      # SEND JSON_LISTINGS_FEED (SP-API)
       # ===============================
 
-      - name: Send Amazon IT Price + Quantity feed (SP-API)
-        if: false
+      - name: Send Amazon IT Listings JSON feed (SP-API)
+        id: send_feed
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -366,29 +335,26 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          python publish_spapi_feed.py \
-            --file amazon_it_price_quantity.txt \
-            --feed-type POST_FLAT_FILE_PRICEANDQUANTITYONLY_UPDATE_DATA \
-            --marketplace APJ6JRA9NG5V4
-            
-      - name: Send Amazon IT Listings feed (SP-API) [JSON_LISTINGS_FEED]
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          set -e
-          python publish_spapi_feed.py \
+          FEED_OUTPUT=$(python publish_spapi_feed.py \
             --file amazon_it_listings.json \
             --feed-type JSON_LISTINGS_FEED \
-            --marketplace APJ6JRA9NG5V4 \
-            --content-type application/json
+            --marketplace APJ6JRA9NG5V4)
 
-      - name: Send Amazon IT Business Pricing feed (SP-API)
-        if: false
+          echo "$FEED_OUTPUT"
+
+          FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
+          echo "Feed ID: $FEED_ID"
+
+          echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
+
+      # ===============================
+      # CHECK FEED STATUS
+      # ===============================
+
+      - name: Wait before checking status
+        run: sleep 20
+
+      - name: Check feed processing status
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -398,17 +364,22 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          python publish_spapi_feed.py \
-            --file amazon_it_business_pricing.txt \
-            --feed-type POST_FLAT_FILE_BUSINESS_PRICING_DATA \
-            --marketplace APJ6JRA9NG5V4
+          python check_spapi_feed.py \
+            --feed-id $FEED_ID
 
-      - name: Upload SP-API request/response dump
+          ls -lh feed_processing_report.txt || true
+          head -n 60 feed_processing_report.txt || true
+
+      # ===============================
+      # UPLOAD PROCESSING REPORT
+      # ===============================
+
+      - name: Upload feed processing report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: spapi-request-response
-          path: spapi_request_response.txt
+          name: feed-processing-report
+          path: feed_processing_report.txt
           if-no-files-found: warn
           retention-days: 7
 
