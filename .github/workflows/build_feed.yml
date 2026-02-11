@@ -317,9 +317,10 @@ jobs:
         run: |
           set -e
           python generate_amazon_feeds.py
-          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv amazon_it_price_quantity.txt amazon_it_business_pricing.txt || true
-          head -n 2 amazon_it_price_quantity.txt | cat -A
-          head -n 2 amazon_it_business_pricing.txt | cat -A || true
+          echo "Generated files:"
+          ls -lh amazon_it_b2c.csv amazon_it_b2b.csv amazon_it_price_quantity.txt amazon_it_listings.json
+          echo "Listings JSON preview:"
+          head -n 30 amazon_it_listings.json | cat
 
       # (opzionale) DE/FR/ES come già avevi...
       - name: Generate Amazon feeds DE
