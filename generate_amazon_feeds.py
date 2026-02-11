@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Any
@@ -137,6 +138,24 @@ def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
 
 
 # ----------------------------
+# Listings JSON helpers
+# ----------------------------
+def issue_locale_for_country(country: str) -> str:
+    # puoi estendere quando replichi altri paesi
+    return {
+        "it": "it_IT",
+        "de": "de_DE",
+        "fr": "fr_FR",
+        "es": "es_ES",
+    }.get(country.lower(), "en_US")
+
+
+def currency_for_country(country: str) -> str:
+    # per ora EUR per IT/DE/FR/ES
+    return "EUR"
+
+
+# ----------------------------
 # MAIN
 # ----------------------------
 def main():
@@ -148,7 +167,8 @@ def main():
 
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
-    out_priceinv = f"amazon_{country}_price_quantity.txt"
+    out_priceinv = f"amazon_{country}_price_quantity.txt"   # debug/legacy
+    out_listings = f"amazon_{country}_listings.json"        # ✅ nuovo definitivo
 
     supplier_handling = load_supplier_handling_max_days(SUPPLIERS_FILE)
     supplier_ship_cost = load_supplier_ship_cost_b2c(SUPPLIERS_FILE)
@@ -168,13 +188,20 @@ def main():
     qty4_mul = Decimal("1") - to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9")) / 100
     round_decimals = int(get_setting(settings, "price_round_decimals", country, "2"))
 
+    # productType default (Step 1: default; Step 2: per-SKU cache)
+    default_product_type = get_setting(settings, "default_product_type", country, "PRODUCT").strip() or "PRODUCT"
+
     # ---- selezione ----
     sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
+    if not sel_rows:
+        raise RuntimeError('Sheet "selezione" empty or missing')
     sel_idx = build_index(sel_rows[0])
 
     pub_b2c, pub_b2b = set(), set()
     for r in sel_rows[1:]:
         sku = get_cell(r, sel_idx, "sku")
+        if not sku:
+            continue
         if norm_yes(get_cell(r, sel_idx, "publish_b2c")):
             pub_b2c.add(sku)
         if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
@@ -197,6 +224,12 @@ def main():
         reader = csv.DictReader(fin, delimiter=delim)
         if not reader.fieldnames:
             raise RuntimeError("filtered.csv has no header")
+
+        # Prepariamo anche la struttura JSON Listings
+        messages = []
+        msg_id = 1
+        issue_locale = issue_locale_for_country(country)
+        currency = currency_for_country(country)
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
              open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
@@ -238,28 +271,80 @@ def main():
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
+                # prezzo B2C finale (con IVA) + ship
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
                 if sku in pub_b2c:
                     w1.writerow({
                         "sku": sku,
-                        "price_b2c_eur": b2c,
+                        "price_b2c_eur": str(b2c),
                         "qty_available": qty,
                         "country": country
                     })
-                    w3.writerow([sku, b2c, "", "", qty, "MFN", handling])
+                    # legacy/debug
+                    w3.writerow([sku, str(b2c), "", "", qty, "MFN", handling])
 
                 if sku in pub_b2b:
                     b2b = money(b2c * b2b_mul, round_decimals)
                     w2.writerow({
                         "sku": sku,
-                        "price_b2c_eur": b2c,
-                        "price_b2b_eur": b2b,
-                        "qty2_price_eur": money(b2c * qty2_mul),
-                        "qty4_price_eur": money(b2c * qty4_mul),
+                        "price_b2c_eur": str(b2c),
+                        "price_b2b_eur": str(b2b),
+                        "qty2_price_eur": str(money(b2c * qty2_mul, round_decimals)),
+                        "qty4_price_eur": str(money(b2c * qty4_mul, round_decimals)),
                         "qty_available": qty,
                         "country": country
                     })
+
+                # ✅ JSON_LISTINGS_FEED (aggiorna qty + prezzo B2C)
+                # Nota: productType default; in Step 2 lo renderemo per-SKU
+                messages.append({
+                    "messageId": msg_id,
+                    "sku": sku,
+                    "operationType": "PATCH",
+                    "productType": default_product_type,
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": "/attributes/fulfillment_availability",
+                            "value": [{
+                                "fulfillment_channel_code": "MFN",
+                                "quantity": qty
+                            }]
+                        },
+                        {
+                            "op": "replace",
+                            "path": "/attributes/purchasable_offer",
+                            "value": [{
+                                "currency": currency,
+                                "our_price": [{
+                                    "schedule": [{
+                                        "value_with_tax": float(b2c)
+                                    }]
+                                }]
+                            }]
+                        }
+                    ]
+                })
+                msg_id += 1
+
+        # Scrivi il JSON feed
+        listings_payload = {
+            "header": {
+                # sellerId NON obbligatorio qui per il feed, ma puoi aggiungerlo se vuoi (Step 2)
+                "version": "2.0",
+                "issueLocale": issue_locale
+            },
+            "messages": messages
+        }
+
+        with open(out_listings, "w", encoding="utf-8") as fj:
+            json.dump(listings_payload, fj, ensure_ascii=False, indent=2)
+
+        print(f"[{country}] Generated {out_b2c} rows={len(pub_b2c)} (publish set size)")
+        print(f"[{country}] Generated {out_b2b} rows={len(pub_b2b)} (publish set size)")
+        print(f"[{country}] Generated {out_priceinv} (legacy/debug)")
+        print(f"[{country}] Generated {out_listings} messages={len(messages)}")
 
 
 if __name__ == "__main__":
