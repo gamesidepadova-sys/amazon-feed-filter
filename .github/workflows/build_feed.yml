@@ -356,6 +356,7 @@ jobs:
       # ===============================
 
       - name: Send Amazon IT Price + Quantity feed (SP-API)
+        if: false
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
