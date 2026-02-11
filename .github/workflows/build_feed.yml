@@ -395,6 +395,7 @@ jobs:
           python upload_to_drive.py
 
       - name: Upload amazon_it_business_pricing.txt to Drive
+        if: false
         env:
           FILE_ID: ${{ secrets.AMAZON_IT_BUSINESS_FILE_ID }}
           LOCAL_FILE: amazon_it_business_pricing.txt
