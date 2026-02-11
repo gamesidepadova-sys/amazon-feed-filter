@@ -6,7 +6,7 @@ import time
 import hashlib
 import hmac
 import datetime as dt
-from typing import Dict, Optional
+from typing import Dict
 
 import requests
 
@@ -86,18 +86,24 @@ def sigv4_headers(method: str, url: str, region: str, access_token: str, body: b
     return out
 
 
-def signed_get(url: str, region: str, access_token: str) -> dict:
+def signed_get_json(url: str, region: str, access_token: str) -> dict:
     headers = sigv4_headers("GET", url, region, access_token, b"")
     r = requests.get(url, headers=headers, timeout=120)
     r.raise_for_status()
     return r.json()
 
 
-def download_report(doc_url: str) -> str:
-    # doc_url è pre-signed, non va firmato
-    r = requests.get(doc_url, timeout=120)
+def download_presigned(url: str) -> bytes:
+    r = requests.get(url, timeout=180)
     r.raise_for_status()
-    return r.text
+    return r.content
+
+
+def extract_payload(obj: dict) -> dict:
+    # Robust: some responses might be {"payload":{...}} or already the payload.
+    if isinstance(obj, dict) and "payload" in obj and isinstance(obj["payload"], dict):
+        return obj["payload"]
+    return obj if isinstance(obj, dict) else {}
 
 
 def main():
@@ -109,41 +115,61 @@ def main():
     args = ap.parse_args()
 
     access_token = lwa_access_token()
-
     base = "https://sellingpartnerapi-eu.amazon.com/feeds/2021-06-30"
     feed_url = f"{base}/feeds/{args.feed_id}"
 
+    last_raw = None
+    last_payload = None
+
     for i in range(args.max_polls):
-        data = signed_get(feed_url, args.region, access_token)
-        payload = data.get("payload", {})
-        status = payload.get("processingStatus")
+        raw = signed_get_json(feed_url, args.region, access_token)
+        payload = extract_payload(raw)
+
+        last_raw = raw
+        last_payload = payload
+
+        status = payload.get("processingStatus") or payload.get("processing_status") or payload.get("status")
+
         print(f"[poll {i+1}/{args.max_polls}] processingStatus={status}")
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        print("RAW (top-level):")
+        print(json.dumps(raw, ensure_ascii=False, indent=2))
 
         if status in {"DONE", "CANCELLED", "FATAL"}:
             break
+
         time.sleep(args.poll_seconds)
 
-    # se c'è report, scaricalo
+    # salva sempre lo stato per debug
+    with open("feed_status.json", "w", encoding="utf-8") as f:
+        json.dump(last_raw or {}, f, ensure_ascii=False, indent=2)
+    print("Saved feed_status.json")
+
+    payload = last_payload or {}
     result_doc_id = payload.get("resultFeedDocumentId")
     if not result_doc_id:
         print("No resultFeedDocumentId yet (no report available).")
         return
 
-    doc = signed_get(f"{base}/documents/{result_doc_id}", args.region, access_token)
-    doc_payload = doc.get("payload", {})
+    doc = signed_get_json(f"{base}/documents/{result_doc_id}", args.region, access_token)
+    doc_payload = extract_payload(doc)
     url = doc_payload.get("url")
     if not url:
-        print("No URL in document payload.")
-        print(json.dumps(doc_payload, ensure_ascii=False, indent=2))
+        with open("feed_document.json", "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
+        print("No URL in document payload. Saved feed_document.json")
         return
 
-    text = download_report(url)
-    with open("feed_processing_report.txt", "w", encoding="utf-8") as f:
-        f.write(text)
-
-    print("Saved feed_processing_report.txt")
-
+    content = download_presigned(url)
+    # prova a decodificare in utf-8 (report spesso è testo)
+    try:
+        text = content.decode("utf-8", errors="replace")
+        with open("feed_processing_report.txt", "w", encoding="utf-8") as f:
+            f.write(text)
+        print("Saved feed_processing_report.txt")
+    except Exception:
+        with open("feed_processing_report.bin", "wb") as f:
+            f.write(content)
+        print("Saved feed_processing_report.bin (binary)")
 
 if __name__ == "__main__":
     main()
