@@ -315,6 +315,7 @@ jobs:
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           COUNTRY: it
+          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
         run: |
           set -e
           python generate_amazon_feeds.py
