@@ -306,7 +306,7 @@ def main():
                             "op": "replace",
                             "path": "/attributes/fulfillment_availability",
                             "value": [{
-                                "fulfillment_channel_code": "MFN",
+                                "fulfillment_channel_code": "DEFAULT",
                                 "quantity": qty
                             }]
                         },
