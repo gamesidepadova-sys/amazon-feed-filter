@@ -405,13 +405,19 @@ jobs:
           echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
 
       # ===============================
-      # CHECK FEED STATUS
+      # WAIT BEFORE STATUS CHECK
       # ===============================
 
-      - name: Wait before checking status
+      - name: Wait before checking feed status
+        if: steps.check_json.outputs.changed == 'true'
         run: sleep 20
 
+      # ===============================
+      # CHECK FEED PROCESSING STATUS
+      # ===============================
+
       - name: Check feed processing status
+        if: steps.check_json.outputs.changed == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -421,48 +427,25 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          python check_spapi_feed.py \
-            --feed-id $FEED_ID
+          python check_spapi_feed.py --feed-id $FEED_ID
 
-          echo "Files after check:"
-          ls -lh feed_status.json || true
-          ls -lh feed_processing_report.txt || true
-
-          echo "Report preview (if present):"
-          head -n 60 feed_processing_report.txt || true
-
-      # ===============================
-      # UPLOAD FEED STATUS (always)
-      # ===============================
-
-      - name: Upload feed status (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-status
-          path: feed_status.json
-          if-no-files-found: warn
-          retention-days: 7
+          if [ -f feed_processing_report.txt ]; then
+            echo "Feed report found:"
+            head -n 80 feed_processing_report.txt
+          else
+            echo "No processing report available."
+          fi
 
       # ===============================
-      # UPLOAD PROCESSING REPORT (if present)
+      # UPLOAD PROCESSING REPORT
       # ===============================
 
       - name: Upload feed processing report
-        if: always()
+        if: steps.check_json.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: feed-processing-report
           path: feed_processing_report.txt
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload feed document meta (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-document-meta
-          path: feed_document_meta.json
           if-no-files-found: warn
           retention-days: 7
 
