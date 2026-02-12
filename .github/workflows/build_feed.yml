@@ -429,18 +429,26 @@ jobs:
           set -e
           python check_spapi_feed.py --feed-id $FEED_ID
 
-          if [ -f feed_processing_report.txt ]; then
-            echo "Feed report found:"
-            head -n 80 feed_processing_report.txt
-          else
-            echo "No processing report available."
-          fi
+          echo "=== feed_status.json ==="
+          cat feed_status.json || true
+
+          echo "=== feed_processing_report.txt (head) ==="
+          head -n 120 feed_processing_report.txt || true
 
       # ===============================
-      # UPLOAD PROCESSING REPORT
+      # UPLOAD ARTIFACTS (ALWAYS)
       # ===============================
 
-      - name: Upload feed processing report
+      - name: Upload feed status (always)
+        if: steps.check_json.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-status
+          path: feed_status.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload feed processing report (always)
         if: steps.check_json.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -449,6 +457,58 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Upload feed document meta (always)
+        if: steps.check_json.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-document-meta
+          path: feed_document_meta.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      # ===============================
+      # FAIL WORKFLOW IF REPORT HAS ERRORS
+      # ===============================
+
+      - name: Fail if feed report contains errors
+        if: steps.check_json.outputs.changed == 'true'
+        run: |
+          set -e
+          if [ ! -f feed_processing_report.txt ]; then
+            echo "No feed_processing_report.txt found -> cannot validate. Failing."
+            exit 1
+          fi
+
+          python - << 'PY'
+          import json, sys
+          p="feed_processing_report.txt"
+          txt=open(p,"r",encoding="utf-8",errors="replace").read().strip()
+
+          try:
+            obj=json.loads(txt)
+          except Exception:
+            if "ERROR" in txt.upper():
+              print("Report is not JSON but contains 'ERROR' -> FAIL")
+              sys.exit(1)
+            print("Report is not JSON and no 'ERROR' found -> OK")
+            sys.exit(0)
+
+          summary=obj.get("summary") or {}
+          errors=int(summary.get("errors") or 0)
+          warnings=int(summary.get("warnings") or 0)
+
+          print(f"Report summary: errors={errors}, warnings={warnings}")
+
+          issues=obj.get("issues") or []
+          if issues:
+            print("Issues:")
+            for it in issues[:50]:
+              print(it)
+
+          if errors > 0:
+            sys.exit(1)
+          PY
+      
       # ===============================
       # UPLOAD AMAZON FEEDS TO DRIVE (overwrite) - keep as backup
       # ===============================
