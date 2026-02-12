@@ -2,13 +2,14 @@ import csv
 import json
 import os
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Set
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SHEET_SELECTION = "selezione"
 SHEET_SETTINGS = "settings"
+
 INPUT_FILTERED = "filtered.csv"
 SUPPLIERS_FILE = "suppliers.csv"
 
@@ -40,6 +41,16 @@ def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
         return Decimal(s)
     except Exception:
         return default
+
+
+def detect_delim_from_first_line(first_line: str) -> str:
+    if "\t" in first_line:
+        return "\t"
+    if "|" in first_line:
+        return "|"
+    if ";" in first_line:
+        return ";"
+    return ","
 
 
 # ----------------------------
@@ -100,7 +111,7 @@ def supplier_code_from_sku(sku: str) -> str:
 
 
 def load_supplier_handling_max_days(path: str) -> Dict[str, int]:
-    out = {}
+    out: Dict[str, int] = {}
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
             r = csv.DictReader(f)
@@ -111,7 +122,7 @@ def load_supplier_handling_max_days(path: str) -> Dict[str, int]:
                 if not code:
                     continue
                 try:
-                    out[code] = int(row.get("lead_b2c_max_days", 2))
+                    out[code] = int(str(row.get("lead_b2c_max_days", "2")).strip())
                 except Exception:
                     out[code] = 2
     except FileNotFoundError:
@@ -120,7 +131,7 @@ def load_supplier_handling_max_days(path: str) -> Dict[str, int]:
 
 
 def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
-    out = {}
+    out: Dict[str, Decimal] = {}
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
             r = csv.DictReader(f)
@@ -129,7 +140,7 @@ def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
                 if not code:
                     continue
                 try:
-                    out[code] = Decimal(str(row.get("ship_cost_b2c_eur")).replace(",", "."))
+                    out[code] = Decimal(str(row.get("ship_cost_b2c_eur", "0")).strip().replace(",", "."))
                 except Exception:
                     out[code] = Decimal("0")
     except FileNotFoundError:
@@ -138,7 +149,7 @@ def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
 
 
 # ----------------------------
-# Listings JSON helpers
+# Locale helpers
 # ----------------------------
 def issue_locale_for_country(country: str) -> str:
     return {
@@ -150,6 +161,7 @@ def issue_locale_for_country(country: str) -> str:
 
 
 def currency_for_country(country: str) -> str:
+    # per i mercati EU che stai usando ora è EUR
     return "EUR"
 
 
@@ -163,7 +175,7 @@ def main():
 
     country = os.environ.get("COUNTRY", "it").strip().lower()
 
-    # ✅ SellerId obbligatorio per JSON_LISTINGS_FEED
+    # ✅ obbligatorio per JSON_LISTINGS_FEED
     seller_id = os.environ.get("AMAZON_SELLER_ID", "").strip()
     if not seller_id:
         raise RuntimeError("AMAZON_SELLER_ID missing (set GitHub secret to Merchant Token / Seller ID)")
@@ -171,11 +183,13 @@ def main():
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
     out_priceinv = f"amazon_{country}_price_quantity.txt"   # legacy/debug
-    out_listings = f"amazon_{country}_listings.json"        # ✅ definitivo
+    out_listings = f"amazon_{country}_listings.json"        # SP-API JSON_LISTINGS_FEED
 
+    # suppliers
     supplier_handling = load_supplier_handling_max_days(SUPPLIERS_FILE)
     supplier_ship_cost = load_supplier_ship_cost_b2c(SUPPLIERS_FILE)
 
+    # Google Sheets client
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
         scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
@@ -184,22 +198,34 @@ def main():
 
     settings = kv_settings(read_sheet(sheets, spreadsheet_id, SHEET_SETTINGS))
 
-    vat_mul = Decimal("1") + to_dec(get_setting(settings, "vat_rate_pct", country, "22")) / 100
-    b2c_mul = Decimal("1") + to_dec(get_setting(settings, "b2c_markup_pct", country, "28")) / 100
-    b2b_mul = Decimal("1") - to_dec(get_setting(settings, "b2b_discount_vs_b2c_pct", country, "7")) / 100
-    qty2_mul = Decimal("1") - to_dec(get_setting(settings, "qty2_discount_vs_b2c_pct", country, "8")) / 100
-    qty4_mul = Decimal("1") - to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9")) / 100
-    round_decimals = int(get_setting(settings, "price_round_decimals", country, "2"))
+    # settings
+    vat_pct = to_dec(get_setting(settings, "vat_rate_pct", country, "22"))
+    b2c_markup_pct = to_dec(get_setting(settings, "b2c_markup_pct", country, "28"))
+    b2b_disc_pct = to_dec(get_setting(settings, "b2b_discount_vs_b2c_pct", country, "7"))
+    qty2_disc_pct = to_dec(get_setting(settings, "qty2_discount_vs_b2c_pct", country, "8"))
+    qty4_disc_pct = to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9"))
+    round_decimals = to_int(get_setting(settings, "price_round_decimals", country, "2"), 2)
 
-    default_product_type = get_setting(settings, "default_product_type", country, "PRODUCT").strip() or "PRODUCT"
+    vat_mul = Decimal("1") + vat_pct / Decimal("100")
+    b2c_mul = Decimal("1") + b2c_markup_pct / Decimal("100")
+    b2b_mul = Decimal("1") - b2b_disc_pct / Decimal("100")
+    qty2_mul = Decimal("1") - qty2_disc_pct / Decimal("100")
+    qty4_mul = Decimal("1") - qty4_disc_pct / Decimal("100")
+
+    default_product_type = (get_setting(settings, "default_product_type", country, "PRODUCT").strip() or "PRODUCT")
+    issue_locale = issue_locale_for_country(country)
+    currency = currency_for_country(country)
 
     # ---- selezione ----
     sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
     if not sel_rows:
         raise RuntimeError('Sheet "selezione" empty or missing')
+
     sel_idx = build_index(sel_rows[0])
 
-    pub_b2c, pub_b2b = set(), set()
+    pub_b2c: Set[str] = set()
+    pub_b2b: Set[str] = set()
+
     for r in sel_rows[1:]:
         sku = get_cell(r, sel_idx, "sku")
         if not sku:
@@ -209,28 +235,28 @@ def main():
         if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
             pub_b2b.add(sku)
 
+    publish_set = pub_b2c | pub_b2b
+
     # ---- filtered.csv ----
     with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
         first = fin.readline()
         fin.seek(0)
-
-        if "\t" in first:
-            delim = "\t"
-        elif "|" in first:
-            delim = "|"
-        elif ";" in first:
-            delim = ";"
-        else:
-            delim = ","
+        delim = detect_delim_from_first_line(first)
 
         reader = csv.DictReader(fin, delimiter=delim)
         if not reader.fieldnames:
             raise RuntimeError("filtered.csv has no header")
 
-        messages = []
-        msg_id = 1
-        issue_locale = issue_locale_for_country(country)
-        currency = currency_for_country(country)
+        # tracking per miglioria 6
+        all_filtered_skus: Set[str] = set()
+
+        # output writers
+        rows_b2c = 0
+        rows_b2b = 0
+        rows_priceinv = 0
+
+        listings_messages: List[dict] = []
+        message_id = 1
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
              open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
@@ -259,12 +285,17 @@ def main():
                 sku = (row.get("sku") or "").strip()
                 if not sku:
                     continue
-                if sku not in pub_b2c and sku not in pub_b2b:
+
+                all_filtered_skus.add(sku)
+
+                # se non è selezionato per publish, ignora
+                if sku not in publish_set:
                     continue
 
                 base = to_dec(row.get("prezzo_iva_esclusa"))
-                qty = to_int(row.get("quantita"))
+                qty = to_int(row.get("quantita"), 0)
 
+                # sanity checks
                 if base <= 0 or qty < 0:
                     continue
 
@@ -272,6 +303,7 @@ def main():
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
+                # ✅ prezzo finale B2C: ((base*markup)+ship) * IVA
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
                 if sku in pub_b2c:
@@ -281,23 +313,31 @@ def main():
                         "qty_available": qty,
                         "country": country
                     })
+                    rows_b2c += 1
+
+                    # legacy/debug
                     w3.writerow([sku, str(b2c), "", "", qty, "MFN", handling])
+                    rows_priceinv += 1
 
                 if sku in pub_b2b:
                     b2b = money(b2c * b2b_mul, round_decimals)
+                    q2 = money(b2c * qty2_mul, round_decimals)
+                    q4 = money(b2c * qty4_mul, round_decimals)
+
                     w2.writerow({
                         "sku": sku,
                         "price_b2c_eur": str(b2c),
                         "price_b2b_eur": str(b2b),
-                        "qty2_price_eur": str(money(b2c * qty2_mul, round_decimals)),
-                        "qty4_price_eur": str(money(b2c * qty4_mul, round_decimals)),
+                        "qty2_price_eur": str(q2),
+                        "qty4_price_eur": str(q4),
                         "qty_available": qty,
                         "country": country
                     })
+                    rows_b2b += 1
 
-                # ✅ JSON_LISTINGS_FEED: prezzo+qty MFN
-                messages.append({
-                    "messageId": msg_id,
+                # ✅ JSON_LISTINGS_FEED: qty + prezzo (DEFAULT, non MFN)
+                listings_messages.append({
+                    "messageId": message_id,
                     "sku": sku,
                     "operationType": "PATCH",
                     "productType": default_product_type,
@@ -324,24 +364,49 @@ def main():
                         }
                     ]
                 })
-                msg_id += 1
+                message_id += 1
 
+        # ----------------------------
+        # MIGLIORIA 6:
+        # SKU in Selezione ma NON più in filtered -> force qty=0
+        # ----------------------------
+        missing_skus = publish_set - all_filtered_skus
+        for sku in sorted(missing_skus):
+            listings_messages.append({
+                "messageId": message_id,
+                "sku": sku,
+                "operationType": "PATCH",
+                "productType": default_product_type,
+                "patches": [
+                    {
+                        "op": "replace",
+                        "path": "/attributes/fulfillment_availability",
+                        "value": [{
+                            "fulfillment_channel_code": "DEFAULT",
+                            "quantity": 0
+                        }]
+                    }
+                ]
+            })
+            message_id += 1
+
+        # write listings json
         listings_payload = {
             "header": {
-                "sellerId": seller_id,   # ✅ FIX errore Merchant obbligatorio
+                "sellerId": seller_id,
                 "version": "2.0",
                 "issueLocale": issue_locale
             },
-            "messages": messages
+            "messages": listings_messages
         }
 
         with open(out_listings, "w", encoding="utf-8") as fj:
             json.dump(listings_payload, fj, ensure_ascii=False, indent=2)
 
-        print(f"[{country}] Generated {out_b2c}")
-        print(f"[{country}] Generated {out_b2b}")
-        print(f"[{country}] Generated {out_priceinv} (legacy/debug)")
-        print(f"[{country}] Generated {out_listings} messages={len(messages)}")
+    print(f"[{country}] Generated {out_b2c} rows={rows_b2c} (publish set size={len(publish_set)})")
+    print(f"[{country}] Generated {out_b2b} rows={rows_b2b} (publish set size={len(publish_set)})")
+    print(f"[{country}] Generated {out_priceinv} (legacy/debug)")
+    print(f"[{country}] Generated {out_listings} messages={len(listings_messages)}")
 
 
 if __name__ == "__main__":
