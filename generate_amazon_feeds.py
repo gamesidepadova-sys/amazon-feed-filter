@@ -141,7 +141,6 @@ def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
 # Listings JSON helpers
 # ----------------------------
 def issue_locale_for_country(country: str) -> str:
-    # puoi estendere quando replichi altri paesi
     return {
         "it": "it_IT",
         "de": "de_DE",
@@ -151,7 +150,6 @@ def issue_locale_for_country(country: str) -> str:
 
 
 def currency_for_country(country: str) -> str:
-    # per ora EUR per IT/DE/FR/ES
     return "EUR"
 
 
@@ -165,10 +163,15 @@ def main():
 
     country = os.environ.get("COUNTRY", "it").strip().lower()
 
+    # ✅ SellerId obbligatorio per JSON_LISTINGS_FEED
+    seller_id = os.environ.get("AMAZON_SELLER_ID", "").strip()
+    if not seller_id:
+        raise RuntimeError("AMAZON_SELLER_ID missing (set GitHub secret to Merchant Token / Seller ID)")
+
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
-    out_priceinv = f"amazon_{country}_price_quantity.txt"   # debug/legacy
-    out_listings = f"amazon_{country}_listings.json"        # ✅ nuovo definitivo
+    out_priceinv = f"amazon_{country}_price_quantity.txt"   # legacy/debug
+    out_listings = f"amazon_{country}_listings.json"        # ✅ definitivo
 
     supplier_handling = load_supplier_handling_max_days(SUPPLIERS_FILE)
     supplier_ship_cost = load_supplier_ship_cost_b2c(SUPPLIERS_FILE)
@@ -188,7 +191,6 @@ def main():
     qty4_mul = Decimal("1") - to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9")) / 100
     round_decimals = int(get_setting(settings, "price_round_decimals", country, "2"))
 
-    # productType default (Step 1: default; Step 2: per-SKU cache)
     default_product_type = get_setting(settings, "default_product_type", country, "PRODUCT").strip() or "PRODUCT"
 
     # ---- selezione ----
@@ -225,7 +227,6 @@ def main():
         if not reader.fieldnames:
             raise RuntimeError("filtered.csv has no header")
 
-        # Prepariamo anche la struttura JSON Listings
         messages = []
         msg_id = 1
         issue_locale = issue_locale_for_country(country)
@@ -271,7 +272,6 @@ def main():
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
-                # prezzo B2C finale (con IVA) + ship
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
                 if sku in pub_b2c:
@@ -281,7 +281,6 @@ def main():
                         "qty_available": qty,
                         "country": country
                     })
-                    # legacy/debug
                     w3.writerow([sku, str(b2c), "", "", qty, "MFN", handling])
 
                 if sku in pub_b2b:
@@ -296,8 +295,7 @@ def main():
                         "country": country
                     })
 
-                # ✅ JSON_LISTINGS_FEED (aggiorna qty + prezzo B2C)
-                # Nota: productType default; in Step 2 lo renderemo per-SKU
+                # ✅ JSON_LISTINGS_FEED: prezzo+qty MFN
                 messages.append({
                     "messageId": msg_id,
                     "sku": sku,
@@ -328,10 +326,9 @@ def main():
                 })
                 msg_id += 1
 
-        # Scrivi il JSON feed
         listings_payload = {
             "header": {
-                # sellerId NON obbligatorio qui per il feed, ma puoi aggiungerlo se vuoi (Step 2)
+                "sellerId": seller_id,   # ✅ FIX errore Merchant obbligatorio
                 "version": "2.0",
                 "issueLocale": issue_locale
             },
@@ -341,8 +338,8 @@ def main():
         with open(out_listings, "w", encoding="utf-8") as fj:
             json.dump(listings_payload, fj, ensure_ascii=False, indent=2)
 
-        print(f"[{country}] Generated {out_b2c} rows={len(pub_b2c)} (publish set size)")
-        print(f"[{country}] Generated {out_b2b} rows={len(pub_b2b)} (publish set size)")
+        print(f"[{country}] Generated {out_b2c}")
+        print(f"[{country}] Generated {out_b2b}")
         print(f"[{country}] Generated {out_priceinv} (legacy/debug)")
         print(f"[{country}] Generated {out_listings} messages={len(messages)}")
 
