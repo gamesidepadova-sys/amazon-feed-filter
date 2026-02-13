@@ -83,7 +83,7 @@ jobs:
           PY
 
       # ===============================
-      # UPLOAD filtered.csv (overwrite)
+      # UPLOAD filtered.csv (CSV file) to Google Drive (overwrite)
       # ===============================
       - name: Upload filtered.csv to Google Drive (overwrite by fileId)
         env:
@@ -105,10 +105,26 @@ jobs:
               scopes=["https://www.googleapis.com/auth/drive"]
           )
           service = build("drive", "v3", credentials=creds)
+
           media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
           updated = service.files().update(fileId=file_id, media_body=media).execute()
-          print("Updated Drive file:", updated.get("id"))
+
+          print("Updated Drive CSV file:", updated.get("id"))
           PY
+
+      # ===============================
+      # UPLOAD filtered.csv -> Google Sheet "Filtered" (columns preserved)
+      # (requires upload_csv_to_sheet.py in repo + secret FILTERED_SHEET_ID)
+      # ===============================
+      - name: Upload filtered.csv to Google Sheet "Filtered"
+        env:
+          FILTERED_SHEET_ID: ${{ secrets.FILTERED_SHEET_ID }}
+          INPUT_CSV: filtered.csv
+          FILTERED_SHEET_NAME: Filtered
+        run: |
+          set -e
+          python upload_csv_to_sheet.py
+
 
       # ===============================
       # BASELINE: daily reset (UTC)
