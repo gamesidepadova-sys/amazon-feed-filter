@@ -245,14 +245,12 @@ jobs:
                   return ","
 
           def find_sku_field(fieldnames):
-              # case-insensitive match for common sku headers
               if not fieldnames:
                   return None
               lower_map = {f.strip().lower(): f for f in fieldnames}
               for cand in ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"]:
                   if cand in lower_map:
                       return lower_map[cand]
-              # fallback: any field containing "sku"
               for f in fieldnames:
                   if "sku" in f.strip().lower():
                       return f
@@ -266,18 +264,18 @@ jobs:
                   if s:
                       baseline.add(s)
 
-          # ---- read filtered ----
-          raw = Path("filtered.csv").read_bytes()
-          text = raw.decode("utf-8-sig", errors="replace")
-          delim = detect_delim(text)
-
-          # use DictReader over real file (safer than splitlines for quotes/newlines)
+          # ---- read filtered (detect delimiter from real file) ----
           with open("filtered.csv","r",encoding="utf-8-sig",newline="") as fin:
               first = fin.readline()
               fin.seek(0)
-              delim2 = "\t" if "\t" in first else ("|" if "|" in first else (";" if ";" in first else ","))
-              # prefer heuristic from real first line
-              delim = delim2 or delim
+              if "\t" in first:
+                  delim = "\t"
+              elif "|" in first:
+                  delim = "|"
+              elif ";" in first:
+                  delim = ";"
+              else:
+                  delim = ","
 
               reader = csv.DictReader(fin, delimiter=delim)
               fieldnames = reader.fieldnames
@@ -289,8 +287,6 @@ jobs:
                   raise RuntimeError(f"SKU column not found in header: {fieldnames}")
 
               rows_out = 0
-
-              # ---- write new_skus with SAME headers as filtered ----
               with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
                   w = csv.DictWriter(fout, fieldnames=fieldnames)
                   w.writeheader()
@@ -308,14 +304,19 @@ jobs:
           print("Header used:", fieldnames)
           PY
 
-      - name: Upload new_skus_0930.csv to Google Drive (overwrite by fileId)
+      # ===============================
+      # UPLOAD new_skus_0930.csv -> Google Sheet "New_SKUs_0930"
+      # (requires upload_csv_to_sheet.py + secret NEWSKUS_SHEET_ID)
+      # ===============================
+      - name: Upload new_skus_0930.csv to Google Sheet "New_SKUs_0930"
         if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
         env:
-          FILE_ID: ${{ secrets.NEWSKUS_FILE_ID }}
-          LOCAL_FILE: new_skus_0930.csv
+          FILTERED_SHEET_ID: ${{ secrets.NEWSKUS_SHEET_ID }}
+          INPUT_CSV: new_skus_0930.csv
+          FILTERED_SHEET_NAME: New_SKUs_0930
         run: |
           set -e
-          python upload_to_drive.py
+          python upload_csv_to_sheet.py
 
       # ===============================
       # GENERATE AMAZON FEEDS
