@@ -208,7 +208,7 @@ jobs:
           print("Downloaded baseline_skus.txt bytes:", len(data))
           PY
 
-      - name: Build new_skus_0930.csv (diff vs baseline)
+      - name: Build new_skus_0930.csv (diff vs baseline, same headers as filtered)
         if: github.event_name != 'schedule' || github.event.schedule != '5 0 * * *'
         run: |
           set -e
@@ -223,20 +223,26 @@ jobs:
                   return d.delimiter
               except Exception:
                   first = text.splitlines()[0] if text else ""
-                  return ";" if first.count(";") > first.count(",") else ","
+                  if "\t" in first: return "\t"
+                  if "|" in first: return "|"
+                  if ";" in first: return ";"
+                  return ","
 
-          def find_col(header_l, candidates):
-              norm = [h.replace(" ", "_") for h in header_l]
-              for c in candidates:
-                  c0 = c.lower().replace(" ", "_")
-                  for i, h in enumerate(norm):
-                      if h == c0:
-                          return i
-                  for i, h in enumerate(norm):
-                      if c0 in h:
-                          return i
-              return -1
+          def find_sku_field(fieldnames):
+              # case-insensitive match for common sku headers
+              if not fieldnames:
+                  return None
+              lower_map = {f.strip().lower(): f for f in fieldnames}
+              for cand in ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"]:
+                  if cand in lower_map:
+                      return lower_map[cand]
+              # fallback: any field containing "sku"
+              for f in fieldnames:
+                  if "sku" in f.strip().lower():
+                      return f
+              return None
 
+          # ---- baseline ----
           baseline = set()
           with open("baseline_skus.txt","r",encoding="utf-8",errors="ignore") as f:
               for line in f:
@@ -244,58 +250,46 @@ jobs:
                   if s:
                       baseline.add(s)
 
+          # ---- read filtered ----
           raw = Path("filtered.csv").read_bytes()
           text = raw.decode("utf-8-sig", errors="replace")
           delim = detect_delim(text)
 
-          reader = csv.reader(text.splitlines(), delimiter=delim)
-          header = next(reader, [])
-          header_l = [h.strip().lower() for h in header]
+          # use DictReader over real file (safer than splitlines for quotes/newlines)
+          with open("filtered.csv","r",encoding="utf-8-sig",newline="") as fin:
+              first = fin.readline()
+              fin.seek(0)
+              delim2 = "\t" if "\t" in first else ("|" if "|" in first else (";" if ";" in first else ","))
+              # prefer heuristic from real first line
+              delim = delim2 or delim
 
-          sku_i = find_col(header_l, ["sku","seller_sku","seller sku","item_sku","item sku","merchant_sku","merchant sku","sku_id"])
-          supplier_i = find_col(header_l, ["supplier_code","supplier","supplierid","supplier_id"])
-          name_i = find_col(header_l, ["titolo_prodotto","name","title","product_name"])
-          qty_i = find_col(header_l, ["quantita","qty","quantity","stock"])
-          cat_i = find_col(header_l, ["cat1","category","categoria"])
-          cost_i = find_col(header_l, ["prezzo_iva_esclusa","cost","price","base_price","prezzo","net_price"])
+              reader = csv.DictReader(fin, delimiter=delim)
+              fieldnames = reader.fieldnames
+              if not fieldnames:
+                  raise RuntimeError("filtered.csv has no header")
 
-          # ✅ EAN / barcode / gtin
-          ean_i = find_col(header_l, ["ean","ean_code","barcode","gtin","gtin13","ean13","product_ean","product_ean_code"])
+              sku_field = find_sku_field(fieldnames)
+              if not sku_field:
+                  raise RuntimeError(f"SKU column not found in header: {fieldnames}")
 
-          if sku_i < 0:
-              raise RuntimeError(f"SKU column not found. Detected delimiter={delim!r}. Header={header}")
+              rows_out = 0
 
-          out_header = ["sku","ean","supplier_code","name","qty","category","cost"]
-          rows_out = 0
+              # ---- write new_skus with SAME headers as filtered ----
+              with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
+                  w = csv.DictWriter(fout, fieldnames=fieldnames)
+                  w.writeheader()
 
-          def get(row, i):
-              return (row[i] if i >= 0 and i < len(row) else "").strip()
-
-          with open("new_skus_0930.csv","w",encoding="utf-8",newline="") as fout:
-              w = csv.writer(fout)
-              w.writerow(out_header)
-
-              for row in reader:
-                  if not row or sku_i >= len(row):
-                      continue
-                  sku = get(row, sku_i)
-                  if not sku or sku in baseline:
-                      continue
-
-                  supplier = get(row, supplier_i)
-                  if not supplier:
-                      parts = sku.split("_")
-                      supplier = parts[1] if len(parts) >= 2 else ""
-
-                  ean = get(row, ean_i)
-
-                  w.writerow([sku, ean, supplier, get(row, name_i), get(row, qty_i), get(row, cat_i), get(row, cost_i)])
-                  rows_out += 1
+                  for row in reader:
+                      sku = (row.get(sku_field) or "").strip()
+                      if not sku or sku in baseline:
+                          continue
+                      w.writerow(row)
+                      rows_out += 1
 
           print("Detected delimiter:", repr(delim))
           print("Baseline size:", len(baseline))
-          print("EAN column index:", ean_i)
           print("New SKUs rows:", rows_out)
+          print("Header used:", fieldnames)
           PY
 
       - name: Upload new_skus_0930.csv to Google Drive (overwrite by fileId)
