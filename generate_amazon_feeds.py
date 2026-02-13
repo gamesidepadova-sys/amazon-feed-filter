@@ -217,23 +217,27 @@ def main():
     currency = currency_for_country(country)
 
     # ---- selezione ----
-    sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
-    if not sel_rows:
-        raise RuntimeError('Sheet "selezione" empty or missing')
+sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
+if not sel_rows:
+    raise RuntimeError('Sheet "selezione" empty or missing')
 
-    sel_idx = build_index(sel_rows[0])
+sel_idx = build_index(sel_rows[0])
 
-    pub_b2c: Set[str] = set()
-    pub_b2b: Set[str] = set()
+# Safety: if publish columns are missing, publish nothing (avoid accidental full publish)
+has_pub_b2c = "publish_b2c" in sel_idx
+has_pub_b2b = "publish_b2b" in sel_idx
+if not has_pub_b2c and not has_pub_b2b:
+    print(f"[{country}] WARNING: no publish_b2c/publish_b2b columns in 'selezione' header -> publishing nothing")
 
-    for r in sel_rows[1:]:
-        sku = get_cell(r, sel_idx, "sku")
-        if not sku:
-            continue
-        if norm_yes(get_cell(r, sel_idx, "publish_b2c")):
-            pub_b2c.add(sku)
-        if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
-            pub_b2b.add(sku)
+pub_b2c, pub_b2b = set(), set()
+for r in sel_rows[1:]:
+    sku = get_cell(r, sel_idx, "sku")
+    if not sku:
+        continue
+    if has_pub_b2c and norm_yes(get_cell(r, sel_idx, "publish_b2c")):
+        pub_b2c.add(sku)
+    if has_pub_b2b and norm_yes(get_cell(r, sel_idx, "publish_b2b")):
+        pub_b2b.add(sku)
 
     publish_set = pub_b2c | pub_b2b
 
