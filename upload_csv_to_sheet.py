@@ -20,7 +20,7 @@ KEEP_COLUMNS = [
 ]
 
 MAX_CELL_CHARS = 49000
-CHUNK_ROWS = 500
+CHUNK_ROWS = 500  # scrittura a blocchi
 
 
 def detect_delimiter(first_line: str) -> str:
@@ -42,7 +42,7 @@ def safe_cell(x: Any) -> str:
 
 def main():
     sheet_id = os.environ.get("FILTERED_SHEET_ID", "").strip()
-    tab_name = os.environ.get("FILTERED_TAB_NAME", "Foglio1").strip()
+    tab_name = os.environ.get("FILTERED_TAB_NAME", "Filtered").strip()
 
     if not sheet_id:
         raise RuntimeError("FILTERED_SHEET_ID env var is missing or empty")
@@ -56,18 +56,27 @@ def main():
     )
     sheets = build("sheets", "v4", credentials=creds)
 
-    # --- Resolve tab name (ensure it exists) ---
+    # --- Spreadsheet metadata & resolve tab ---
     meta = sheets.spreadsheets().get(spreadsheetId=sheet_id).execute()
-    sheet_titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
-    if not sheet_titles:
+    sheet_objs = meta.get("sheets", [])
+    if not sheet_objs:
         raise RuntimeError("Spreadsheet has no sheets/tabs")
 
-    if tab_name not in sheet_titles:
-        real = sheet_titles[0]
+    title_to_sheet = {s["properties"]["title"]: s for s in sheet_objs}
+    if tab_name not in title_to_sheet:
+        real = sheet_objs[0]["properties"]["title"]
         print(f"WARNING: tab '{tab_name}' not found. Using first tab: '{real}'")
         tab_name = real
 
-    # --- Read CSV ---
+    tab = title_to_sheet.get(tab_name) or sheet_objs[0]
+    sheet_props = tab["properties"]
+    sheet_title = sheet_props["title"]
+    sheet_gid = sheet_props["sheetId"]
+    grid = sheet_props.get("gridProperties", {})
+    current_rows = int(grid.get("rowCount", 1000))
+    current_cols = int(grid.get("columnCount", 26))
+
+    # --- Read CSV -> values ---
     with open(INPUT_CSV, "r", encoding="utf-8-sig", newline="") as fin:
         first = fin.readline()
         fin.seek(0)
@@ -88,12 +97,9 @@ def main():
         if "sku" not in [h.lower() for h in header_out]:
             raise RuntimeError(f"{INPUT_CSV} missing required column 'sku'. Header={fieldnames}")
 
-        # We write stable lowercase headers into the sheet
         std_header = [h.lower() for h in header_out]
 
-        values: List[List[str]] = []
-        values.append(std_header)
-
+        values: List[List[str]] = [std_header]
         rows = 0
         for row in reader:
             out_row: List[str] = []
@@ -102,8 +108,37 @@ def main():
             values.append(out_row)
             rows += 1
 
-    # --- Clear destination (FIXED RANGE) ---
-    clear_range = f"{tab_name}!A:ZZ"
+    needed_rows = len(values)  # header + data
+    needed_cols = len(values[0])
+
+    # --- Ensure grid is big enough ---
+    new_rows = max(current_rows, needed_rows)
+    new_cols = max(current_cols, needed_cols)
+
+    if new_rows != current_rows or new_cols != current_cols:
+        print(f"Resizing sheet '{sheet_title}' grid: rows {current_rows}->{new_rows}, cols {current_cols}->{new_cols}")
+        sheets.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_gid,
+                                "gridProperties": {
+                                    "rowCount": new_rows,
+                                    "columnCount": new_cols,
+                                },
+                            },
+                            "fields": "gridProperties(rowCount,columnCount)",
+                        }
+                    }
+                ]
+            },
+        ).execute()
+
+    # --- Clear destination (valid range) ---
+    clear_range = f"{sheet_title}!A:ZZ"
     sheets.spreadsheets().values().clear(
         spreadsheetId=sheet_id,
         range=clear_range,
@@ -112,7 +147,7 @@ def main():
 
     # --- Write in chunks ---
     def write_chunk(start_row_1based: int, chunk_vals: List[List[str]]):
-        rng = f"{tab_name}!A{start_row_1based}"
+        rng = f"{sheet_title}!A{start_row_1based}"
         sheets.spreadsheets().values().update(
             spreadsheetId=sheet_id,
             range=rng,
@@ -128,10 +163,10 @@ def main():
         row_cursor += len(chunk)
         start += CHUNK_ROWS
 
-    print(f"Uploaded {INPUT_CSV} -> Google Sheet {sheet_id} tab={tab_name}")
+    print(f"Uploaded {INPUT_CSV} -> Google Sheet {sheet_id} tab={sheet_title}")
     print(f"Delimiter detected: {repr(delim)}")
     print(f"Rows written: {rows} (+ header)")
-    print(f"Columns written: {len(values[0])} -> {values[0]}")
+    print(f"Columns written: {needed_cols} -> {values[0]}")
 
 
 if __name__ == "__main__":
