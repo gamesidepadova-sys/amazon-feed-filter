@@ -496,7 +496,7 @@ jobs:
       - name: Upload amazon_it_price_quantity.txt to Drive
         env:
           FILE_ID: ${{ secrets.AMAZON_IT_PRICE_QTY_FILE_ID }}
-          LOCAL_FILE: amazon_it_price_quantity.txt
+          LOCAL_FILE: amazon_it_listings.json
         run: |
           set -e
           python upload_to_drive.py
