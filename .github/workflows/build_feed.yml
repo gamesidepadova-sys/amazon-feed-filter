@@ -528,7 +528,8 @@ jobs:
         with:
           name: amazon-feeds
           path: |
-            amazon_it_price_quantity.txt
-            amazon_it_business_pricing.txt
+            amazon_it_listings.json
+            amazon_it_b2c.csv
+            amazon_it_b2b.csv
           if-no-files-found: warn
           retention-days: 3
