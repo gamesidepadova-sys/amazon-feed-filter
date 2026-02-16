@@ -83,37 +83,6 @@ jobs:
           PY
 
       # ===============================
-      # UPLOAD filtered.csv (CSV file) to Google Drive (overwrite)
-      # ===============================
-      - name: Upload filtered.csv to Google Sheet "Filtered" (light columns)
-        env:
-          FILTERED_SHEET_ID: ${{ secrets.FILTERED_SHEET_ID }}
-          FILTERED_TAB_NAME: Foglio1
-        run: |
-          set -e
-          python - << 'PY'
-          import os
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-
-          file_id = os.environ.get("GDRIVE_FILE_ID","").strip()
-          if not file_id:
-              raise RuntimeError("GDRIVE_FILE_ID is empty or missing")
-
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
-
-          media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
-          updated = service.files().update(fileId=file_id, media_body=media).execute()
-
-          print("Updated Drive CSV file:", updated.get("id"))
-          PY
-
-      # ===============================
       # UPLOAD filtered.csv -> Google Sheet "Filtered" (columns preserved)
       # (requires upload_csv_to_sheet.py in repo + secret FILTERED_SHEET_ID)
       # ===============================
