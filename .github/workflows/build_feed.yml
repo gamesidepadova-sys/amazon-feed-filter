@@ -85,9 +85,10 @@ jobs:
       # ===============================
       # UPLOAD filtered.csv (CSV file) to Google Drive (overwrite)
       # ===============================
-      - name: Upload filtered.csv to Google Drive (overwrite by fileId)
+      - name: Upload filtered.csv to Google Sheet "Filtered" (light columns)
         env:
-          GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
+          FILTERED_SHEET_ID: ${{ secrets.FILTERED_SHEET_ID }}
+          FILTERED_TAB_NAME: Foglio1
         run: |
           set -e
           python - << 'PY'
