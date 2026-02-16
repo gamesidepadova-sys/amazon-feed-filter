@@ -420,32 +420,49 @@ jobs:
       # UPLOAD ARTIFACTS (ALWAYS)
       # ===============================
 
-      - name: Upload feed status (always)
-        if: steps.check_json.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-status
-          path: feed_status.json
-          if-no-files-found: warn
-          retention-days: 7
+# ===============================
+# UPLOAD ARTIFACTS (ALWAYS)
+# ===============================
 
-      - name: Upload feed processing report (always)
-        if: steps.check_json.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-processing-report
-          path: feed_processing_report.txt
-          if-no-files-found: warn
-          retention-days: 7
+- name: Upload feed status
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: feed-status
+    path: feed_status.json
+    if-no-files-found: warn
+    retention-days: 7
 
-      - name: Upload feed document meta (always)
-        if: steps.check_json.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-document-meta
-          path: feed_document_meta.json
-          if-no-files-found: warn
-          retention-days: 7
+- name: Upload feed processing report
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: feed-processing-report
+    path: feed_processing_report.txt
+    if-no-files-found: warn
+    retention-days: 7
+
+- name: Upload feed document meta
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: feed-document-meta
+    path: feed_document_meta.json
+    if-no-files-found: warn
+    retention-days: 7
+
+- name: Upload generated Amazon files
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: amazon-generated-files
+    path: |
+      amazon_it_listings.json
+      amazon_it_b2c.csv
+      amazon_it_b2b.csv
+    if-no-files-found: warn
+    retention-days: 7
+
 
       # ===============================
       # FAIL WORKFLOW IF REPORT HAS ERRORS
