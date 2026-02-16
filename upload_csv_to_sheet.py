@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import csv
 import os
+import time
 from typing import List, Any
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 INPUT_CSV = os.environ.get("FILTERED_LOCAL_FILE", "filtered.csv").strip()
 
@@ -20,7 +22,10 @@ KEEP_COLUMNS = [
 ]
 
 MAX_CELL_CHARS = 49000
-CHUNK_ROWS = 500  # scrittura a blocchi
+
+# Con batchUpdate possiamo inviare range grandi in una singola request.
+# Se il dataset è enorme, facciamo pochissimi batch (es. 5) per stare safe.
+MAX_ROWS_PER_BATCH = 20000  # 2 batch per ~44k, ok
 
 
 def detect_delimiter(first_line: str) -> str:
@@ -40,13 +45,31 @@ def safe_cell(x: Any) -> str:
     return s
 
 
+def retry(call_fn, max_tries=6):
+    delay = 2
+    for i in range(max_tries):
+        try:
+            return call_fn()
+        except HttpError as e:
+            status = getattr(e, "status_code", None)
+            # googleapiclient sometimes stores status in resp
+            if hasattr(e, "resp") and e.resp is not None:
+                status = e.resp.status
+            if status in (429, 500, 503):
+                if i == max_tries - 1:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 30)
+                continue
+            raise
+
+
 def main():
     sheet_id = os.environ.get("FILTERED_SHEET_ID", "").strip()
     tab_name = os.environ.get("FILTERED_TAB_NAME", "Filtered").strip()
 
     if not sheet_id:
         raise RuntimeError("FILTERED_SHEET_ID env var is missing or empty")
-
     if not os.path.exists("sa.json"):
         raise RuntimeError("sa.json not found")
 
@@ -56,8 +79,8 @@ def main():
     )
     sheets = build("sheets", "v4", credentials=creds)
 
-    # --- Spreadsheet metadata & resolve tab ---
-    meta = sheets.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    # --- metadata & tab resolve ---
+    meta = retry(lambda: sheets.spreadsheets().get(spreadsheetId=sheet_id).execute())
     sheet_objs = meta.get("sheets", [])
     if not sheet_objs:
         raise RuntimeError("Spreadsheet has no sheets/tabs")
@@ -69,14 +92,14 @@ def main():
         tab_name = real
 
     tab = title_to_sheet.get(tab_name) or sheet_objs[0]
-    sheet_props = tab["properties"]
-    sheet_title = sheet_props["title"]
-    sheet_gid = sheet_props["sheetId"]
-    grid = sheet_props.get("gridProperties", {})
+    props = tab["properties"]
+    sheet_title = props["title"]
+    sheet_gid = props["sheetId"]
+    grid = props.get("gridProperties", {})
     current_rows = int(grid.get("rowCount", 1000))
     current_cols = int(grid.get("columnCount", 26))
 
-    # --- Read CSV -> values ---
+    # --- read csv -> values ---
     with open(INPUT_CSV, "r", encoding="utf-8-sig", newline="") as fin:
         first = fin.readline()
         fin.seek(0)
@@ -97,6 +120,7 @@ def main():
         if "sku" not in [h.lower() for h in header_out]:
             raise RuntimeError(f"{INPUT_CSV} missing required column 'sku'. Header={fieldnames}")
 
+        # stable lowercase header in sheet
         std_header = [h.lower() for h in header_out]
 
         values: List[List[str]] = [std_header]
@@ -108,16 +132,15 @@ def main():
             values.append(out_row)
             rows += 1
 
-    needed_rows = len(values)  # header + data
+    needed_rows = len(values)
     needed_cols = len(values[0])
 
-    # --- Ensure grid is big enough ---
+    # --- resize grid if needed ---
     new_rows = max(current_rows, needed_rows)
     new_cols = max(current_cols, needed_cols)
-
     if new_rows != current_rows or new_cols != current_cols:
         print(f"Resizing sheet '{sheet_title}' grid: rows {current_rows}->{new_rows}, cols {current_cols}->{new_cols}")
-        sheets.spreadsheets().batchUpdate(
+        retry(lambda: sheets.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={
                 "requests": [
@@ -125,48 +148,51 @@ def main():
                         "updateSheetProperties": {
                             "properties": {
                                 "sheetId": sheet_gid,
-                                "gridProperties": {
-                                    "rowCount": new_rows,
-                                    "columnCount": new_cols,
-                                },
+                                "gridProperties": {"rowCount": new_rows, "columnCount": new_cols},
                             },
                             "fields": "gridProperties(rowCount,columnCount)",
                         }
                     }
                 ]
             },
-        ).execute()
+        ).execute())
 
-    # --- Clear destination (valid range) ---
+    # --- clear ---
     clear_range = f"{sheet_title}!A:ZZ"
-    sheets.spreadsheets().values().clear(
+    retry(lambda: sheets.spreadsheets().values().clear(
         spreadsheetId=sheet_id,
         range=clear_range,
         body={}
-    ).execute()
+    ).execute())
 
-    # --- Write in chunks ---
-    def write_chunk(start_row_1based: int, chunk_vals: List[List[str]]):
-        rng = f"{sheet_title}!A{start_row_1based}"
-        sheets.spreadsheets().values().update(
+    # --- write using batchUpdate in VERY FEW requests ---
+    # We send multiple ranges in one batchUpdate call if needed.
+    data = []
+    start_row = 1  # 1-based
+    idx = 0
+    while idx < len(values):
+        chunk = values[idx: idx + MAX_ROWS_PER_BATCH]
+        rng = f"{sheet_title}!A{start_row}"
+        data.append({"range": rng, "values": chunk})
+        start_row += len(chunk)
+        idx += MAX_ROWS_PER_BATCH
+
+    def do_batch_write():
+        return sheets.spreadsheets().values().batchUpdate(
             spreadsheetId=sheet_id,
-            range=rng,
-            valueInputOption="RAW",
-            body={"values": chunk_vals},
+            body={
+                "valueInputOption": "RAW",
+                "data": data
+            }
         ).execute()
 
-    start = 0
-    row_cursor = 1
-    while start < len(values):
-        chunk = values[start:start + CHUNK_ROWS]
-        write_chunk(row_cursor, chunk)
-        row_cursor += len(chunk)
-        start += CHUNK_ROWS
+    retry(do_batch_write)
 
     print(f"Uploaded {INPUT_CSV} -> Google Sheet {sheet_id} tab={sheet_title}")
     print(f"Delimiter detected: {repr(delim)}")
     print(f"Rows written: {rows} (+ header)")
     print(f"Columns written: {needed_cols} -> {values[0]}")
+    print(f"Batch ranges sent: {len(data)} (MAX_ROWS_PER_BATCH={MAX_ROWS_PER_BATCH})")
 
 
 if __name__ == "__main__":
