@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 import csv
 import os
-from typing import List, Dict, Any
+from typing import List, Any
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 INPUT_CSV = os.environ.get("FILTERED_LOCAL_FILE", "filtered.csv").strip()
 
-# Colonne che vogliamo vedere nel Google Sheet "Filtered" (operative e leggere)
-# (escludiamo descrizione_prodotto / immagini per evitare celle > 50k)
 KEEP_COLUMNS = [
     "cat1",
     "sku",
@@ -21,12 +19,11 @@ KEEP_COLUMNS = [
     "costo_spedizione",
 ]
 
-MAX_CELL_CHARS = 49000  # Google Sheets: 50k per cella -> stiamo sotto
-CHUNK_ROWS = 500        # scrittura a blocchi
+MAX_CELL_CHARS = 49000
+CHUNK_ROWS = 500
 
 
 def detect_delimiter(first_line: str) -> str:
-    # euristica semplice e stabile
     if "\t" in first_line:
         return "\t"
     if "|" in first_line:
@@ -43,10 +40,6 @@ def safe_cell(x: Any) -> str:
     return s
 
 
-def normalize_fieldnames(fieldnames: List[str]) -> List[str]:
-    return [str(h or "").strip() for h in fieldnames]
-
-
 def main():
     sheet_id = os.environ.get("FILTERED_SHEET_ID", "").strip()
     tab_name = os.environ.get("FILTERED_TAB_NAME", "Foglio1").strip()
@@ -55,16 +48,26 @@ def main():
         raise RuntimeError("FILTERED_SHEET_ID env var is missing or empty")
 
     if not os.path.exists("sa.json"):
-        raise RuntimeError("sa.json not found. Ensure the workflow writes the service account JSON to sa.json.")
+        raise RuntimeError("sa.json not found")
 
-    # Google Sheets client
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     sheets = build("sheets", "v4", credentials=creds)
 
-    # Read CSV and build values matrix
+    # --- Resolve tab name (ensure it exists) ---
+    meta = sheets.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    sheet_titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+    if not sheet_titles:
+        raise RuntimeError("Spreadsheet has no sheets/tabs")
+
+    if tab_name not in sheet_titles:
+        real = sheet_titles[0]
+        print(f"WARNING: tab '{tab_name}' not found. Using first tab: '{real}'")
+        tab_name = real
+
+    # --- Read CSV ---
     with open(INPUT_CSV, "r", encoding="utf-8-sig", newline="") as fin:
         first = fin.readline()
         fin.seek(0)
@@ -74,23 +77,21 @@ def main():
         if not reader.fieldnames:
             raise RuntimeError(f"{INPUT_CSV} has no header row")
 
-        fieldnames = normalize_fieldnames(reader.fieldnames)
-        norm_map = {h.strip().lower(): h for h in fieldnames}  # lower -> original
+        fieldnames = [h.strip() for h in reader.fieldnames]
+        norm_map = {h.lower(): h for h in fieldnames}
 
-        # keep only columns that exist in the csv (case-insensitive)
         header_out: List[str] = []
         for k in KEEP_COLUMNS:
             if k.lower() in norm_map:
-                header_out.append(norm_map[k.lower()])  # keep original spelling from file
+                header_out.append(norm_map[k.lower()])
 
-        # ensure sku exists
-        if "sku" not in [h.strip().lower() for h in header_out]:
-            raise RuntimeError(f"{INPUT_CSV} does not contain required column 'sku'. Header={fieldnames}")
+        if "sku" not in [h.lower() for h in header_out]:
+            raise RuntimeError(f"{INPUT_CSV} missing required column 'sku'. Header={fieldnames}")
+
+        # We write stable lowercase headers into the sheet
+        std_header = [h.lower() for h in header_out]
 
         values: List[List[str]] = []
-        # write header using normalized standard names (not original)
-        # -> this makes the Sheet stable even if upstream header casing changes
-        std_header = [h.strip().lower() for h in header_out]
         values.append(std_header)
 
         rows = 0
@@ -101,14 +102,15 @@ def main():
             values.append(out_row)
             rows += 1
 
-    # Clear destination
+    # --- Clear destination (FIXED RANGE) ---
+    clear_range = f"{tab_name}!A:ZZ"
     sheets.spreadsheets().values().clear(
         spreadsheetId=sheet_id,
-        range=f"{tab_name}!A1:ZZ",
+        range=clear_range,
         body={}
     ).execute()
 
-    # Write in chunks
+    # --- Write in chunks ---
     def write_chunk(start_row_1based: int, chunk_vals: List[List[str]]):
         rng = f"{tab_name}!A{start_row_1based}"
         sheets.spreadsheets().values().update(
