@@ -2,13 +2,13 @@ import csv
 import json
 import os
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-SHEET_SELECTION = "selezione"   # case-insensitive match
-SHEET_SETTINGS = "settings"     # case-insensitive match
+SHEET_SELECTION = "SELEZIONE"      # <-- il tuo tab si chiama così (maiuscolo)
+SHEET_SETTINGS = "settings"
 INPUT_FILTERED = "filtered.csv"
 SUPPLIERS_FILE = "suppliers.csv"
 
@@ -27,10 +27,7 @@ def norm_yes(x: Any) -> bool:
 
 def to_int(x: Any, default: int = 0) -> int:
     try:
-        s = str(x).strip()
-        if s == "":
-            return default
-        return int(s)
+        return int(str(x).strip())
     except Exception:
         return default
 
@@ -45,43 +42,19 @@ def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
         return default
 
 
-def detect_csv_delim_from_first_line(first_line: str) -> str:
-    if "\t" in first_line:
-        return "\t"
-    if "|" in first_line:
-        return "|"
-    if ";" in first_line:
-        return ";"
-    return ","
-
-
 # ----------------------------
 # Google Sheets helpers
 # ----------------------------
-def _get_sheet_tab_title_case_insensitive(service, spreadsheet_id: str, wanted: str) -> str:
-    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
-    tabs = [s["properties"]["title"] for s in meta.get("sheets", []) if "properties" in s]
-    if wanted in tabs:
-        return wanted
-    w = wanted.strip().lower()
-    for t in tabs:
-        if t.strip().lower() == w:
-            return t
-    # fallback: return wanted (will raise a clear error later)
-    return wanted
-
-
 def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]:
-    real_tab = _get_sheet_tab_title_case_insensitive(service, spreadsheet_id, sheet_name)
     resp = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=real_tab
+        range=sheet_name
     ).execute()
     return resp.get("values", [])
 
 
 def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
-    out: Dict[str, str] = {}
+    out = {}
     for r in rows:
         if len(r) < 2:
             continue
@@ -126,44 +99,42 @@ def supplier_code_from_sku(sku: str) -> str:
     return parts[1] if len(parts) >= 2 else ""
 
 
-def load_suppliers(path: str) -> Tuple[Dict[str, int], Dict[str, Decimal]]:
-    """
-    Returns:
-      handling_max_days_by_supplier_code
-      ship_cost_b2c_eur_by_supplier_code
-    """
-    handling: Dict[str, int] = {}
-    ship_cost: Dict[str, Decimal] = {}
-
+def load_supplier_handling_max_days(path: str) -> Dict[str, int]:
+    out = {}
     try:
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                if not _norm_bool(row.get("active")):
+                    continue
+                code = (row.get("supplier_code") or "").strip()
+                if not code:
+                    continue
+                try:
+                    out[code] = int(str(row.get("lead_b2c_max_days", "2")).strip())
+                except Exception:
+                    out[code] = 2
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
             r = csv.DictReader(f)
             for row in r:
                 code = (row.get("supplier_code") or "").strip()
                 if not code:
                     continue
-
-                active = _norm_bool(row.get("active"))
-                if not active:
-                    continue
-
-                # handling
                 try:
-                    handling[code] = int(str(row.get("lead_b2c_max_days", "2")).strip() or "2")
+                    out[code] = Decimal(str(row.get("ship_cost_b2c_eur", "0")).replace(",", "."))
                 except Exception:
-                    handling[code] = 2
-
-                # ship cost
-                try:
-                    ship_cost[code] = Decimal(str(row.get("ship_cost_b2c_eur", "0")).strip().replace(",", ".") or "0")
-                except Exception:
-                    ship_cost[code] = Decimal("0")
-
+                    out[code] = Decimal("0")
     except FileNotFoundError:
-        # optional file
         pass
-
-    return handling, ship_cost
+    return out
 
 
 # ----------------------------
@@ -176,7 +147,7 @@ def main():
 
     seller_id = os.environ.get("AMAZON_SELLER_ID", "").strip()
     if not seller_id:
-        raise RuntimeError("AMAZON_SELLER_ID missing (sellerId required in listings feed)")
+        raise RuntimeError("AMAZON_SELLER_ID missing (sellerId obbligatorio per JSON_LISTINGS_FEED)")
 
     country = os.environ.get("COUNTRY", "it").strip().lower()
     if country not in {"it", "de", "fr", "es"}:
@@ -184,20 +155,21 @@ def main():
 
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
-    out_listings = f"amazon_{country}_listings.json"
+    out_priceinv = f"amazon_{country}_price_quantity.txt"      # legacy/debug
+    out_listings = f"amazon_{country}_listings.json"           # JSON_LISTINGS_FEED
 
-    # suppliers
-    supplier_handling, supplier_ship_cost = load_suppliers(SUPPLIERS_FILE)
+    # suppliers maps
+    supplier_handling = load_supplier_handling_max_days(SUPPLIERS_FILE)
+    supplier_ship_cost = load_supplier_ship_cost_b2c(SUPPLIERS_FILE)
 
-    # Sheets API
+    # Google Sheets
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
         scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
     )
-    sheets_service = build("sheets", "v4", credentials=creds)
+    sheets = build("sheets", "v4", credentials=creds)
 
-    # settings
-    settings = kv_settings(read_sheet(sheets_service, spreadsheet_id, SHEET_SETTINGS))
+    settings = kv_settings(read_sheet(sheets, spreadsheet_id, SHEET_SETTINGS))
 
     vat_pct = to_dec(get_setting(settings, "vat_rate_pct", country, "22"))
     b2c_markup_pct = to_dec(get_setting(settings, "b2c_markup_pct", country, "28"))
@@ -212,19 +184,16 @@ def main():
     qty2_mul = Decimal("1") - qty2_disc_pct / Decimal("100")
     qty4_mul = Decimal("1") - qty4_disc_pct / Decimal("100")
 
-    # selection sheet
-    sel_rows = read_sheet(sheets_service, spreadsheet_id, SHEET_SELECTION)
+    # ---- SELEZIONE ----
+    sel_rows = read_sheet(sheets, spreadsheet_id, SHEET_SELECTION)
     if not sel_rows:
-        raise RuntimeError('Selection sheet is empty or missing (tab "SELEZIONE")')
+        raise RuntimeError(f'Sheet "{SHEET_SELECTION}" empty or missing in GSHEET')
 
-    sel_header = sel_rows[0]
-    sel_idx = build_index(sel_header)
+    sel_idx = build_index(sel_rows[0])
 
-    pub_b2c: set[str] = set()
-    pub_b2b: set[str] = set()
-
+    pub_b2c, pub_b2b = set(), set()
     for r in sel_rows[1:]:
-        sku = get_cell(r, sel_idx, "sku").strip()
+        sku = get_cell(r, sel_idx, "sku")
         if not sku:
             continue
         if norm_yes(get_cell(r, sel_idx, "publish_b2c")):
@@ -232,262 +201,191 @@ def main():
         if norm_yes(get_cell(r, sel_idx, "publish_b2b")):
             pub_b2b.add(sku)
 
-    # DEBUG: selection parsing
-    print("DEBUG selection_rows =", len(sel_rows))
-    print("DEBUG selection_header =", sel_header)
-    print("DEBUG pub_b2c size =", len(pub_b2c), "sample =", list(sorted(pub_b2c))[:10])
-    print("DEBUG pub_b2b size =", len(pub_b2b), "sample =", list(sorted(pub_b2b))[:10])
-
-    # filtered.csv
+    # ---- filtered.csv ----
     with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
         first = fin.readline()
         fin.seek(0)
-        delim = detect_csv_delim_from_first_line(first)
-        reader = csv.DictReader(fin, delimiter=delim)
 
+        if "\t" in first:
+            delim = "\t"
+        elif "|" in first:
+            delim = "|"
+        elif ";" in first:
+            delim = ";"
+        else:
+            delim = ","
+
+        reader = csv.DictReader(fin, delimiter=delim)
         if not reader.fieldnames:
             raise RuntimeError("filtered.csv has no header")
 
-        # normalize fieldnames (for robustness)
-        # We'll access by exact expected keys, but also try common variants.
-        fields_lower = {f.strip().lower(): f for f in reader.fieldnames}
+        # --- DEBUG counters ---
+        skipped_missing_sku = 0
+        skipped_not_selected = 0
+        skipped_missing_fields = 0
+        skipped_bad_base_qty = 0
+        matched = 0
 
-        def field(*cands: str) -> str:
-            for c in cands:
-                k = c.strip().lower()
-                if k in fields_lower:
-                    return fields_lower[k]
-            return ""
+        print("DEBUG filtered.csv fieldnames:", reader.fieldnames)
+        print("DEBUG selection sizes:", "pub_b2c=", len(pub_b2c), "pub_b2b=", len(pub_b2b))
 
-        f_sku = field("sku")
-        f_price = field("prezzo_iva_esclusa", "prezzo iva esclusa", "net_price", "price_net", "cost")
-        f_qty = field("quantita", "qty", "quantity", "stock")
-
-        if not f_sku:
-            raise RuntimeError(f"filtered.csv: missing 'sku' column. Header={reader.fieldnames}")
-        if not f_price:
-            raise RuntimeError(f"filtered.csv: missing 'prezzo_iva_esclusa' (or alias) column. Header={reader.fieldnames}")
-        if not f_qty:
-            raise RuntimeError(f"filtered.csv: missing 'quantita' (or alias) column. Header={reader.fieldnames}")
-
-        # outputs
         rows_b2c = 0
         rows_b2b = 0
+        rows_priceinv = 0
 
-        messages: List[Dict[str, Any]] = []
-        message_id = 1
-
-        # debug counters
-        seen = 0
-        skipped_not_selected = 0
-        skipped_bad_values = 0
-        matched_selected = 0
+        listings_messages = []
+        msg_id = 1
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
-             open(out_b2b, "w", encoding="utf-8", newline="") as f2:
+             open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
+             open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
 
-            w1 = csv.DictWriter(f1, fieldnames=["sku", "price_b2c_eur", "qty_available", "country"])
-            w2 = csv.DictWriter(f2, fieldnames=[
+            w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
+            w2 = csv.DictWriter(f2, [
                 "sku", "price_b2c_eur", "price_b2b_eur",
                 "qty2_price_eur", "qty4_price_eur", "qty_available", "country"
             ])
+            w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
+
             w1.writeheader()
             w2.writeheader()
+            w3.writerow([
+                "sku",
+                "price",
+                "minimum-seller-allowed-price",
+                "maximum-seller-allowed-price",
+                "quantity",
+                "fulfillment-channel",
+                "handling-time",
+            ])
 
-# --- DEBUG counters ---
-skipped_missing_sku = 0
-skipped_not_selected = 0
-skipped_bad_base_qty = 0
-skipped_missing_fields = 0
-matched = 0
+            for row in reader:
+                sku = (row.get("sku") or "").strip()
 
-# optional: stampa header che vede il csv
-print("DEBUG filtered.csv fieldnames:", reader.fieldnames)
+                if not sku:
+                    skipped_missing_sku += 1
+                    continue
 
-for row in reader:
-    # 1) SKU
-    sku = (row.get("sku") or "").strip()
-    if not sku:
-        skipped_missing_sku += 1
-        continue
+                if sku not in pub_b2c and sku not in pub_b2b:
+                    skipped_not_selected += 1
+                    continue
 
-    # 2) Selezione publish
-    if sku not in pub_b2c and sku not in pub_b2b:
-        skipped_not_selected += 1
-        # logga solo le prime 5 volte per non spam
-        if skipped_not_selected <= 5:
-            print("SKIP not selected:", sku)
-        continue
+                raw_base = row.get("prezzo_iva_esclusa")
+                raw_qty = row.get("quantita")
 
-    # 3) Campi base/qty
-    raw_base = row.get("prezzo_iva_esclusa")
-    raw_qty = row.get("quantita")
+                if raw_base is None or raw_qty is None:
+                    skipped_missing_fields += 1
+                    continue
 
-    if raw_base is None or raw_qty is None:
-        skipped_missing_fields += 1
-        if skipped_missing_fields <= 5:
-            print("SKIP missing fields:", sku, "prezzo_iva_esclusa=", raw_base, "quantita=", raw_qty)
-        continue
+                base = to_dec(raw_base)
+                qty = to_int(raw_qty)
 
-    base = to_dec(raw_base)
-    qty = to_int(raw_qty)
+                if base <= 0 or qty < 0:
+                    skipped_bad_base_qty += 1
+                    continue
 
-    if base <= 0 or qty < 0:
-        skipped_bad_base_qty += 1
-        if skipped_bad_base_qty <= 5:
-            print("SKIP bad base/qty:", sku, "raw_base=", raw_base, "raw_qty=", raw_qty, "base=", base, "qty=", qty)
-        continue
-
-    # --- da qui in poi, la riga è OK ---
-    matched += 1
-
-    sup = supplier_code_from_sku(sku)
-    ship = supplier_ship_cost.get(sup, Decimal("0"))
-    handling = supplier_handling.get(sup, 2)
-
-    b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
-
-    if sku in pub_b2c:
-        w1.writerow({
-            "sku": sku,
-            "price_b2c_eur": b2c,
-            "qty_available": qty,
-            "country": country
-        })
-        w3.writerow([sku, b2c, "", "", qty, "MFN", handling])
-
-    if sku in pub_b2b:
-        b2b = money(b2c * b2b_mul, round_decimals)
-        w2.writerow({
-            "sku": sku,
-            "price_b2c_eur": b2c,
-            "price_b2b_eur": b2b,
-            "qty2_price_eur": money(b2c * qty2_mul, round_decimals),
-            "qty4_price_eur": money(b2c * qty4_mul, round_decimals),
-            "qty_available": qty,
-            "country": country
-        })
-
-# --- DEBUG summary ---
-print("DEBUG selection sizes:", "pub_b2c=", len(pub_b2c), "pub_b2b=", len(pub_b2b))
-print("DEBUG matched:", matched)
-print("DEBUG skipped_missing_sku:", skipped_missing_sku)
-print("DEBUG skipped_not_selected:", skipped_not_selected)
-print("DEBUG skipped_missing_fields:", skipped_missing_fields)
-print("DEBUG skipped_bad_base_qty:", skipped_bad_base_qty)
-
-                 
-                matched_selected += 1
+                matched += 1
 
                 sup = supplier_code_from_sku(sku)
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
-                # B2C price: (base * markup + ship) * vat
+                # Prezzo finale: (base * markup + ship) * IVA
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
-                # Build one listings PATCH that sets:
-                # - quantity (MFN)
-                # - purchasable offer (price)
-                # For SKU in either B2C or B2B, we still set offer+qty (B2C price is the consumer price here).
-                patches = [
-                    {
-                        "op": "replace",
-                        "path": "/attributes/fulfillment_availability",
-                        "value": [
-                            {
-                                # IMPORTANT: for your account, previous test accepted "DEFAULT".
-                                # We keep "DEFAULT" (not "MFN") to avoid the earlier error.
-                                "fulfillment_channel_code": "DEFAULT",
-                                "quantity": qty
-                            }
-                        ]
-                    },
-                    {
-                        "op": "replace",
-                        "path": "/attributes/purchasable_offer",
-                        "value": [
-                            {
-                                "currency": "EUR",
-                                "our_price": [
-                                    {
-                                        "schedule": [
-                                            {
-                                                "value_with_tax": float(b2c)
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                ]
-
-                messages.append({
-                    "messageId": message_id,
-                    "sku": sku,
-                    "operationType": "PATCH",
-                    "productType": "PRODUCT",
-                    "patches": patches
-                })
-                message_id += 1
-
+                # --- B2C CSV ---
                 if sku in pub_b2c:
                     w1.writerow({
                         "sku": sku,
-                        "price_b2c_eur": str(b2c),
+                        "price_b2c_eur": f"{b2c}",
                         "qty_available": qty,
                         "country": country
                     })
                     rows_b2c += 1
 
+                # --- B2B CSV ---
                 if sku in pub_b2b:
                     b2b = money(b2c * b2b_mul, round_decimals)
                     q2 = money(b2c * qty2_mul, round_decimals)
                     q4 = money(b2c * qty4_mul, round_decimals)
                     w2.writerow({
                         "sku": sku,
-                        "price_b2c_eur": str(b2c),
-                        "price_b2b_eur": str(b2b),
-                        "qty2_price_eur": str(q2),
-                        "qty4_price_eur": str(q4),
+                        "price_b2c_eur": f"{b2c}",
+                        "price_b2b_eur": f"{b2b}",
+                        "qty2_price_eur": f"{q2}",
+                        "qty4_price_eur": f"{q4}",
                         "qty_available": qty,
                         "country": country
                     })
                     rows_b2b += 1
 
-    # write listings json
-    out_obj = {
+                # --- legacy tab feed (debug) ---
+                # NB: non più valido come feedType, ma lo teniamo per backup/controllo.
+                w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling)])
+                rows_priceinv += 1
+
+                # --- JSON_LISTINGS_FEED message ---
+                # Nota: qui aggiorniamo price + quantity MFN.
+                listings_messages.append({
+                    "messageId": msg_id,
+                    "sku": sku,
+                    "operationType": "PATCH",
+                    "productType": "PRODUCT",
+                    "patches": [
+                        {
+                            "op": "replace",
+                            "path": "/attributes/fulfillment_availability",
+                            "value": [{
+                                "fulfillment_channel_code": "DEFAULT",
+                                "quantity": qty
+                            }]
+                        },
+                        {
+                            "op": "replace",
+                            "path": "/attributes/purchasable_offer",
+                            "value": [{
+                                "currency": "EUR",
+                                "our_price": [{
+                                    "schedule": [{
+                                        "value_with_tax": float(b2c)
+                                    }]
+                                }]
+                            }]
+                        },
+                        {
+                            "op": "replace",
+                            "path": "/attributes/merchant_shipping_group",
+                            "value": [{
+                                "value": "Default"
+                            }]
+                        }
+                    ]
+                })
+                msg_id += 1
+
+    # --- write JSON listings feed ---
+    listings_obj = {
         "header": {
             "sellerId": seller_id,
             "version": "2.0",
-            "issueLocale": f"{country}_IT" if country == "it" else "en_US"
+            "issueLocale": "it_IT" if country == "it" else "en_GB"
         },
-        "messages": messages
+        "messages": listings_messages
     }
-    # keep it_IT for Italy explicitly
-    if country == "it":
-        out_obj["header"]["issueLocale"] = "it_IT"
 
-    with open(out_listings, "w", encoding="utf-8") as f:
-        json.dump(out_obj, f, ensure_ascii=False, indent=2)
+    with open(out_listings, "w", encoding="utf-8") as fjson:
+        json.dump(listings_obj, fjson, ensure_ascii=False, indent=2)
 
     print(f"[{country}] Generated {out_b2c} rows={rows_b2c}")
     print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
-    print(f"[{country}] Generated {out_listings} messages={len(messages)}")
+    print(f"[{country}] Generated {out_priceinv} (legacy/debug) rows={rows_priceinv}")
+    print(f"[{country}] Generated {out_listings} messages={len(listings_messages)}")
 
-    # DEBUG summary
-    print("DEBUG filtered rows seen =", seen)
-    print("DEBUG matched_selected =", matched_selected)
-    print("DEBUG skipped_not_selected =", skipped_not_selected)
-    print("DEBUG skipped_bad_values =", skipped_bad_values)
-
-    # EXTRA: if empty, print a hint
-    if len(messages) == 0:
-        print("DEBUG: messages is empty. Most common causes:")
-        print(" - pub_b2c/pub_b2b empty (publish_b2c/publish_b2b not 'YES')")
-        print(" - SKU mismatch between selection and filtered.csv (spaces/hidden chars)")
-        print(" - base/qty parsed as 0 due to wrong column names or formatting")
+    print("DEBUG matched:", matched)
+    print("DEBUG skipped_missing_sku:", skipped_missing_sku)
+    print("DEBUG skipped_not_selected:", skipped_not_selected)
+    print("DEBUG skipped_missing_fields:", skipped_missing_fields)
+    print("DEBUG skipped_bad_base_qty:", skipped_bad_base_qty)
 
 
 if __name__ == "__main__":
