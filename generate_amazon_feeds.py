@@ -294,25 +294,89 @@ def main():
             w1.writeheader()
             w2.writeheader()
 
-            for row in reader:
-                seen += 1
+# --- DEBUG counters ---
+skipped_missing_sku = 0
+skipped_not_selected = 0
+skipped_bad_base_qty = 0
+skipped_missing_fields = 0
+matched = 0
 
-                sku = (row.get(f_sku) or "").strip()
-                if not sku:
-                    continue
+# optional: stampa header che vede il csv
+print("DEBUG filtered.csv fieldnames:", reader.fieldnames)
 
-                if sku not in pub_b2c and sku not in pub_b2b:
-                    skipped_not_selected += 1
-                    continue
+for row in reader:
+    # 1) SKU
+    sku = (row.get("sku") or "").strip()
+    if not sku:
+        skipped_missing_sku += 1
+        continue
 
-                base = to_dec(row.get(f_price))
-                qty = to_int(row.get(f_qty), 0)
+    # 2) Selezione publish
+    if sku not in pub_b2c and sku not in pub_b2b:
+        skipped_not_selected += 1
+        # logga solo le prime 5 volte per non spam
+        if skipped_not_selected <= 5:
+            print("SKIP not selected:", sku)
+        continue
 
-                # sanity
-                if base <= 0 or qty < 0:
-                    skipped_bad_values += 1
-                    continue
+    # 3) Campi base/qty
+    raw_base = row.get("prezzo_iva_esclusa")
+    raw_qty = row.get("quantita")
 
+    if raw_base is None or raw_qty is None:
+        skipped_missing_fields += 1
+        if skipped_missing_fields <= 5:
+            print("SKIP missing fields:", sku, "prezzo_iva_esclusa=", raw_base, "quantita=", raw_qty)
+        continue
+
+    base = to_dec(raw_base)
+    qty = to_int(raw_qty)
+
+    if base <= 0 or qty < 0:
+        skipped_bad_base_qty += 1
+        if skipped_bad_base_qty <= 5:
+            print("SKIP bad base/qty:", sku, "raw_base=", raw_base, "raw_qty=", raw_qty, "base=", base, "qty=", qty)
+        continue
+
+    # --- da qui in poi, la riga è OK ---
+    matched += 1
+
+    sup = supplier_code_from_sku(sku)
+    ship = supplier_ship_cost.get(sup, Decimal("0"))
+    handling = supplier_handling.get(sup, 2)
+
+    b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
+
+    if sku in pub_b2c:
+        w1.writerow({
+            "sku": sku,
+            "price_b2c_eur": b2c,
+            "qty_available": qty,
+            "country": country
+        })
+        w3.writerow([sku, b2c, "", "", qty, "MFN", handling])
+
+    if sku in pub_b2b:
+        b2b = money(b2c * b2b_mul, round_decimals)
+        w2.writerow({
+            "sku": sku,
+            "price_b2c_eur": b2c,
+            "price_b2b_eur": b2b,
+            "qty2_price_eur": money(b2c * qty2_mul, round_decimals),
+            "qty4_price_eur": money(b2c * qty4_mul, round_decimals),
+            "qty_available": qty,
+            "country": country
+        })
+
+# --- DEBUG summary ---
+print("DEBUG selection sizes:", "pub_b2c=", len(pub_b2c), "pub_b2b=", len(pub_b2b))
+print("DEBUG matched:", matched)
+print("DEBUG skipped_missing_sku:", skipped_missing_sku)
+print("DEBUG skipped_not_selected:", skipped_not_selected)
+print("DEBUG skipped_missing_fields:", skipped_missing_fields)
+print("DEBUG skipped_bad_base_qty:", skipped_bad_base_qty)
+
+                 
                 matched_selected += 1
 
                 sup = supplier_code_from_sku(sku)
