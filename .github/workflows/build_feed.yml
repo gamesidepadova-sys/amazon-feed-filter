@@ -415,54 +415,48 @@ jobs:
 
           echo "=== feed_processing_report.txt (head) ==="
           head -n 120 feed_processing_report.txt || true
-
       # ===============================
       # UPLOAD ARTIFACTS (ALWAYS)
       # ===============================
 
-# ===============================
-# UPLOAD ARTIFACTS (ALWAYS)
-# ===============================
+      - name: Upload feed status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-status
+          path: feed_status.json
+          if-no-files-found: warn
+          retention-days: 7
 
-- name: Upload feed status
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: feed-status
-    path: feed_status.json
-    if-no-files-found: warn
-    retention-days: 7
+      - name: Upload feed processing report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-processing-report
+          path: feed_processing_report.txt
+          if-no-files-found: warn
+          retention-days: 7
 
-- name: Upload feed processing report
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: feed-processing-report
-    path: feed_processing_report.txt
-    if-no-files-found: warn
-    retention-days: 7
+      - name: Upload feed document meta
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-document-meta
+          path: feed_document_meta.json
+          if-no-files-found: warn
+          retention-days: 7
 
-- name: Upload feed document meta
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: feed-document-meta
-    path: feed_document_meta.json
-    if-no-files-found: warn
-    retention-days: 7
-
-- name: Upload generated Amazon files
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: amazon-generated-files
-    path: |
-      amazon_it_listings.json
-      amazon_it_b2c.csv
-      amazon_it_b2b.csv
-    if-no-files-found: warn
-    retention-days: 7
-
+      - name: Upload generated Amazon files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: amazon-generated-files
+          path: |
+            amazon_it_listings.json
+            amazon_it_b2c.csv
+            amazon_it_b2b.csv
+          if-no-files-found: warn
+          retention-days: 7
 
       # ===============================
       # FAIL WORKFLOW IF REPORT HAS ERRORS
@@ -506,31 +500,26 @@ jobs:
           if errors > 0:
             sys.exit(1)
           PY
-      
+
       # ===============================
-      # UPLOAD AMAZON FEEDS TO DRIVE (overwrite) - keep as backup
+      # UPLOAD AMAZON JSON TO DRIVE (overwrite) - backup
       # ===============================
-      - name: Upload amazon_it_price_quantity.txt to Drive
+
+      - name: Upload amazon_it_listings.json to Drive (backup)
         env:
-          FILE_ID: ${{ secrets.AMAZON_IT_PRICE_QTY_FILE_ID }}
+          FILE_ID: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
           LOCAL_FILE: amazon_it_listings.json
         run: |
           set -e
-          python upload_to_drive.py
-
-      - name: Upload amazon_it_business_pricing.txt to Drive
-        if: false
-        env:
-          FILE_ID: ${{ secrets.AMAZON_IT_BUSINESS_FILE_ID }}
-          LOCAL_FILE: amazon_it_business_pricing.txt
-        run: |
-          set -e
+          test -f "$LOCAL_FILE"
           python upload_to_drive.py
 
       # ===============================
       # ARTIFACTS (debug)
       # ===============================
+
       - name: Upload artifact (debug pipeline files)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-files
@@ -541,6 +530,7 @@ jobs:
           retention-days: 3
 
       - name: Upload artifact (debug amazon feeds)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: amazon-feeds
