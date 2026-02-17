@@ -326,42 +326,36 @@ def main():
 
                 # --- JSON_LISTINGS_FEED message ---
                 # Nota: qui aggiorniamo price + quantity MFN.
-                listings_messages.append({
-                    "messageId": msg_id,
-                    "sku": sku,
-                    "operationType": "PATCH",
-                    "productType": "PRODUCT",
-                    "patches": [
-                        {
-                            "op": "replace",
-                            "path": "/attributes/fulfillment_availability",
-                            "value": [{
-                                "fulfillment_channel_code": "DEFAULT",
-                                "quantity": qty
-                            }]
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/purchasable_offer",
-                            "value": [{
-                                "currency": "EUR",
-                                "our_price": [{
-                                    "schedule": [{
-                                        "value_with_tax": float(b2c)
-                                    }]
-                                }]
-                            }]
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/merchant_shipping_group",
-                            "value": [{
-                                "value": "Default"
-                            }]
-                        }
-                    ]
-                })
-                msg_id += 1
+                    listings_messages.append({
+                "messageId": msg_id,
+                "sku": sku,
+                "operationType": "PATCH",
+                "productType": "PRODUCT",
+                "patches": [
+                {
+                "op": "replace",
+                "path": "/attributes/fulfillment_availability",
+                "value": [{
+                "fulfillment_channel_code": "DEFAULT",
+                "quantity": qty
+            }]
+        },
+        {
+                "op": "replace",
+                "path": "/attributes/purchasable_offer",
+                "value": [{
+                "currency": "EUR",
+                "our_price": [{
+                    "schedule": [{
+                        "value_with_tax": float(b2c)
+                    }]
+                }]
+            }]
+        }
+    ]
+})
+msg_id += 1
+
 
     # --- write JSON listings feed ---
     listings_obj = {
