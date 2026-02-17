@@ -57,9 +57,32 @@ def supplier_code_from_sku(sku: str) -> str:
 # =============================
 
 def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]:
+    """
+    Read a sheet by name, case-insensitive.
+    If exact name not found, tries to match among existing tabs.
+    """
+    # 1) Get spreadsheet metadata to find real tab names
+    meta = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    tabs = [s["properties"]["title"] for s in meta.get("sheets", []) if "properties" in s]
+
+    # 2) Exact match
+    if sheet_name in tabs:
+        target = sheet_name
+    else:
+        # 3) Case-insensitive match
+        target = None
+        want = sheet_name.strip().lower()
+        for t in tabs:
+            if t.strip().lower() == want:
+                target = t
+                break
+        # 4) Fallback: keep original name (will error clearly)
+        if not target:
+            target = sheet_name
+
     resp = service.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
-        range=sheet_name
+        range=target
     ).execute()
     return resp.get("values", [])
 
