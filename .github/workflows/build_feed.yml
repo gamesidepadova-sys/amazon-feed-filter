@@ -288,13 +288,11 @@ jobs:
           set -e
           python upload_csv_to_sheet.py
 
-      # ===============================
-      # GENERATE AMAZON FEEDS
-      # ===============================
-      # ===============================
-      # GENERATE AMAZON FEEDS
+           # ===============================
+      # GENERATE AMAZON FEEDS + SEND LISTINGS (MULTI-COUNTRY)
       # ===============================
 
+      # ---------- IT ----------
       - name: Generate Amazon feeds IT
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
@@ -305,12 +303,7 @@ jobs:
           python generate_amazon_feeds.py
           ls -lh amazon_it_*
 
-      # ===============================
-      # CHANGE DETECTION (persisted via cache)
-      # ===============================
-
-      - name: Restore listings hash cache
-        id: cache_listings_hash
+      - name: Restore listings hash cache (IT)
         uses: actions/cache@v4
         with:
           path: .cache
@@ -318,48 +311,28 @@ jobs:
           restore-keys: |
             listings-hash-it-
 
-      - name: Check if listings JSON changed
-        id: check_json
+      - name: Check if listings JSON changed (IT)
+        id: check_it
         run: |
           set -e
           mkdir -p .cache
-
-          if [ ! -f amazon_it_listings.json ]; then
-            echo "amazon_it_listings.json not found -> treat as unchanged=false? (skip)"
+          FILE=amazon_it_listings.json
+          if [ ! -f "$FILE" ]; then
             echo "changed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
-
-          NEW_HASH=$(md5sum amazon_it_listings.json | awk '{print $1}')
-          echo "NEW_HASH=$NEW_HASH"
-
+          NEW_HASH=$(md5sum "$FILE" | awk '{print $1}')
           OLD_HASH=""
-          if [ -f .cache/amazon_it_listings.md5 ]; then
-            OLD_HASH=$(cat .cache/amazon_it_listings.md5 || true)
-          fi
-          echo "OLD_HASH=$OLD_HASH"
-
+          [ -f .cache/amazon_it_listings.md5 ] && OLD_HASH=$(cat .cache/amazon_it_listings.md5 || true)
           if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
-            echo "No changes detected -> skip send."
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "$NEW_HASH" > .cache/amazon_it_listings.md5
-            echo "Changes detected -> will send."
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      # (optional) debug
-      - name: Debug change flag
-        run: |
-          echo "changed = ${{ steps.check_json.outputs.changed }}"
-
-      # ===============================
-      # SEND JSON_LISTINGS_FEED (SP-API)
-      # ===============================
-
       - name: Send Amazon IT Listings JSON feed (SP-API)
-        if: steps.check_json.outputs.changed == 'true'
-        id: send_feed
+        if: steps.check_it.outputs.changed == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -369,36 +342,17 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          FEED_OUTPUT=$(python publish_spapi_feed.py \
+          OUT=$(python publish_spapi_feed.py \
             --file amazon_it_listings.json \
             --feed-type JSON_LISTINGS_FEED \
             --marketplace APJ6JRA9NG5V4)
+          echo "$OUT"
+          FEED_ID=$(echo "$OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*' || true)
+          test -n "$FEED_ID"
+          echo "FEED_ID_IT=$FEED_ID" >> $GITHUB_ENV
 
-          echo "$FEED_OUTPUT"
-
-          FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*' || true)
-          if [ -z "$FEED_ID" ]; then
-            echo "ERROR: cannot parse feedId from output"
-            exit 1
-          fi
-
-          echo "Feed ID: $FEED_ID"
-          echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
-
-      # ===============================
-      # WAIT BEFORE STATUS CHECK
-      # ===============================
-
-      - name: Wait before checking feed status
-        if: steps.check_json.outputs.changed == 'true'
-        run: sleep 20
-
-      # ===============================
-      # CHECK FEED PROCESSING STATUS
-      # ===============================
-
-      - name: Check feed processing status
-        if: steps.check_json.outputs.changed == 'true'
+      - name: Check feed processing status (IT)
+        if: steps.check_it.outputs.changed == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -408,135 +362,418 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
-          python check_spapi_feed.py --feed-id $FEED_ID
+          sleep 20
+          python check_spapi_feed.py --feed-id "$FEED_ID_IT"
+          mv -f feed_status.json feed_status_it.json || true
+          mv -f feed_processing_report.txt feed_processing_report_it.txt || true
+          mv -f feed_document_meta.json feed_document_meta_it.json || true
 
-          echo "=== feed_status.json ==="
-          cat feed_status.json || true
-
-          echo "=== feed_processing_report.txt (head) ==="
-          head -n 120 feed_processing_report.txt || true
-      # ===============================
-      # UPLOAD ARTIFACTS (ALWAYS)
-      # ===============================
-
-      - name: Upload feed status
+      - name: Upload artifacts (IT)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: feed-status
-          path: feed_status.json
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload feed processing report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-processing-report
-          path: feed_processing_report.txt
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload feed document meta
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: feed-document-meta
-          path: feed_document_meta.json
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Upload generated Amazon files
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: amazon-generated-files
+          name: it-feed-artifacts
           path: |
             amazon_it_listings.json
             amazon_it_b2c.csv
             amazon_it_b2b.csv
+            feed_status_it.json
+            feed_processing_report_it.txt
+            feed_document_meta_it.json
           if-no-files-found: warn
           retention-days: 7
 
-      # ===============================
-      # FAIL WORKFLOW IF REPORT HAS ERRORS
-      # ===============================
-
-      - name: Fail if feed report contains errors
-        if: steps.check_json.outputs.changed == 'true'
+      - name: Fail if feed report contains errors (IT)
+        if: steps.check_it.outputs.changed == 'true'
         run: |
           set -e
-          if [ ! -f feed_processing_report.txt ]; then
-            echo "No feed_processing_report.txt found -> cannot validate. Failing."
-            exit 1
-          fi
-
           python - << 'PY'
-          import json, sys
-          p="feed_processing_report.txt"
-          txt=open(p,"r",encoding="utf-8",errors="replace").read().strip()
-
-          try:
-            obj=json.loads(txt)
-          except Exception:
-            if "ERROR" in txt.upper():
-              print("Report is not JSON but contains 'ERROR' -> FAIL")
+          import json, sys, pathlib
+          p = pathlib.Path("feed_processing_report_it.txt")
+          if not p.exists():
+              print("Missing report -> fail")
               sys.exit(1)
-            print("Report is not JSON and no 'ERROR' found -> OK")
-            sys.exit(0)
-
-          summary=obj.get("summary") or {}
-          errors=int(summary.get("errors") or 0)
-          warnings=int(summary.get("warnings") or 0)
-
-          print(f"Report summary: errors={errors}, warnings={warnings}")
-
-          issues=obj.get("issues") or []
-          if issues:
-            print("Issues:")
-            for it in issues[:50]:
-              print(it)
-
+          txt = p.read_text(encoding="utf-8", errors="replace").strip()
+          obj = json.loads(txt)
+          summary = obj.get("summary") or {}
+          errors = int(summary.get("errors") or 0)
+          warnings = int(summary.get("warnings") or 0)
+          print("Report summary IT:", "errors=", errors, "warnings=", warnings)
           if errors > 0:
-            sys.exit(1)
+              print("Issues:", obj.get("issues", [])[:50])
+              sys.exit(1)
           PY
 
-      # ===============================
-      # UPLOAD AMAZON JSON TO DRIVE (overwrite) - backup
-      # ===============================
-
       - name: Upload amazon_it_listings.json to Drive (backup)
+        if: always()
         env:
           FILE_ID: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
           LOCAL_FILE: amazon_it_listings.json
         run: |
           set -e
+          test -n "$FILE_ID"
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
 
-      # ===============================
-      # ARTIFACTS (debug)
-      # ===============================
 
-      - name: Upload artifact (debug pipeline files)
+      # ---------- FR ----------
+      - name: Generate Amazon feeds FR
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          COUNTRY: fr
+          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
+        run: |
+          set -e
+          python generate_amazon_feeds.py
+          ls -lh amazon_fr_*
+
+      - name: Restore listings hash cache (FR)
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: listings-hash-fr-${{ github.ref_name }}
+          restore-keys: |
+            listings-hash-fr-
+
+      - name: Check if listings JSON changed (FR)
+        id: check_fr
+        run: |
+          set -e
+          mkdir -p .cache
+          FILE=amazon_fr_listings.json
+          if [ ! -f "$FILE" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          NEW_HASH=$(md5sum "$FILE" | awk '{print $1}')
+          OLD_HASH=""
+          [ -f .cache/amazon_fr_listings.md5 ] && OLD_HASH=$(cat .cache/amazon_fr_listings.md5 || true)
+          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "$NEW_HASH" > .cache/amazon_fr_listings.md5
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Amazon FR Listings JSON feed (SP-API)
+        if: steps.check_fr.outputs.changed == 'true'
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          OUT=$(python publish_spapi_feed.py \
+            --file amazon_fr_listings.json \
+            --feed-type JSON_LISTINGS_FEED \
+            --marketplace A13V1IB3VIYZZH)
+          echo "$OUT"
+          FEED_ID=$(echo "$OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*' || true)
+          test -n "$FEED_ID"
+          echo "FEED_ID_FR=$FEED_ID" >> $GITHUB_ENV
+
+      - name: Check feed processing status (FR)
+        if: steps.check_fr.outputs.changed == 'true'
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          sleep 20
+          python check_spapi_feed.py --feed-id "$FEED_ID_FR"
+          mv -f feed_status.json feed_status_fr.json || true
+          mv -f feed_processing_report.txt feed_processing_report_fr.txt || true
+          mv -f feed_document_meta.json feed_document_meta_fr.json || true
+
+      - name: Upload artifacts (FR)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pipeline-files
+          name: fr-feed-artifacts
           path: |
-            filtered.csv
-            new_skus_0930.csv
+            amazon_fr_listings.json
+            amazon_fr_b2c.csv
+            amazon_fr_b2b.csv
+            feed_status_fr.json
+            feed_processing_report_fr.txt
+            feed_document_meta_fr.json
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 7
 
-      - name: Upload artifact (debug amazon feeds)
+      - name: Fail if feed report contains errors (FR)
+        if: steps.check_fr.outputs.changed == 'true'
+        run: |
+          set -e
+          python - << 'PY'
+          import json, sys, pathlib
+          p = pathlib.Path("feed_processing_report_fr.txt")
+          if not p.exists():
+              print("Missing report -> fail")
+              sys.exit(1)
+          obj = json.loads(p.read_text(encoding="utf-8", errors="replace").strip())
+          errors = int((obj.get("summary") or {}).get("errors") or 0)
+          print("Report summary FR errors=", errors)
+          if errors > 0:
+              print("Issues:", obj.get("issues", [])[:50])
+              sys.exit(1)
+          PY
+
+      - name: Upload amazon_fr_listings.json to Drive (backup)
+        if: always()
+        env:
+          FILE_ID: ${{ secrets.AMAZON_FR_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_fr_listings.json
+        run: |
+          set -e
+          test -n "$FILE_ID"
+          test -f "$LOCAL_FILE"
+          python upload_to_drive.py
+
+
+      # ---------- DE ----------
+      - name: Generate Amazon feeds DE
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          COUNTRY: de
+          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
+        run: |
+          set -e
+          python generate_amazon_feeds.py
+          ls -lh amazon_de_*
+
+      - name: Restore listings hash cache (DE)
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: listings-hash-de-${{ github.ref_name }}
+          restore-keys: |
+            listings-hash-de-
+
+      - name: Check if listings JSON changed (DE)
+        id: check_de
+        run: |
+          set -e
+          mkdir -p .cache
+          FILE=amazon_de_listings.json
+          if [ ! -f "$FILE" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          NEW_HASH=$(md5sum "$FILE" | awk '{print $1}')
+          OLD_HASH=""
+          [ -f .cache/amazon_de_listings.md5 ] && OLD_HASH=$(cat .cache/amazon_de_listings.md5 || true)
+          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "$NEW_HASH" > .cache/amazon_de_listings.md5
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Amazon DE Listings JSON feed (SP-API)
+        if: steps.check_de.outputs.changed == 'true'
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          OUT=$(python publish_spapi_feed.py \
+            --file amazon_de_listings.json \
+            --feed-type JSON_LISTINGS_FEED \
+            --marketplace A1PA6795UKMFR9)
+          echo "$OUT"
+          FEED_ID=$(echo "$OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*' || true)
+          test -n "$FEED_ID"
+          echo "FEED_ID_DE=$FEED_ID" >> $GITHUB_ENV
+
+      - name: Check feed processing status (DE)
+        if: steps.check_de.outputs.changed == 'true'
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          sleep 20
+          python check_spapi_feed.py --feed-id "$FEED_ID_DE"
+          mv -f feed_status.json feed_status_de.json || true
+          mv -f feed_processing_report.txt feed_processing_report_de.txt || true
+          mv -f feed_document_meta.json feed_document_meta_de.json || true
+
+      - name: Upload artifacts (DE)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: amazon-feeds
+          name: de-feed-artifacts
           path: |
-            amazon_it_listings.json
-            amazon_it_b2c.csv
-            amazon_it_b2b.csv
+            amazon_de_listings.json
+            amazon_de_b2c.csv
+            amazon_de_b2b.csv
+            feed_status_de.json
+            feed_processing_report_de.txt
+            feed_document_meta_de.json
           if-no-files-found: warn
-          retention-days: 3
+          retention-days: 7
+
+      - name: Fail if feed report contains errors (DE)
+        if: steps.check_de.outputs.changed == 'true'
+        run: |
+          set -e
+          python - << 'PY'
+          import json, sys, pathlib
+          p = pathlib.Path("feed_processing_report_de.txt")
+          if not p.exists():
+              print("Missing report -> fail")
+              sys.exit(1)
+          obj = json.loads(p.read_text(encoding="utf-8", errors="replace").strip())
+          errors = int((obj.get("summary") or {}).get("errors") or 0)
+          print("Report summary DE errors=", errors)
+          if errors > 0:
+              print("Issues:", obj.get("issues", [])[:50])
+              sys.exit(1)
+          PY
+
+      - name: Upload amazon_de_listings.json to Drive (backup)
+        if: always()
+        env:
+          FILE_ID: ${{ secrets.AMAZON_DE_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_de_listings.json
+        run: |
+          set -e
+          test -n "$FILE_ID"
+          test -f "$LOCAL_FILE"
+          python upload_to_drive.py
+
+
+      # ---------- ES ----------
+      - name: Generate Amazon feeds ES
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          COUNTRY: es
+          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
+        run: |
+          set -e
+          python generate_amazon_feeds.py
+          ls -lh amazon_es_*
+
+      - name: Restore listings hash cache (ES)
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: listings-hash-es-${{ github.ref_name }}
+          restore-keys: |
+            listings-hash-es-
+
+      - name: Check if listings JSON changed (ES)
+        id: check_es
+        run: |
+          set -e
+          mkdir -p .cache
+          FILE=amazon_es_listings.json
+          if [ ! -f "$FILE" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          NEW_HASH=$(md5sum "$FILE" | awk '{print $1}')
+          OLD_HASH=""
+          [ -f .cache/amazon_es_listings.md5 ] && OLD_HASH=$(cat .cache/amazon_es_listings.md5 || true)
+          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "$NEW_HASH" > .cache/amazon_es_listings.md5
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Amazon ES Listings JSON feed (SP-API)
+        if: steps.check_es.outputs.changed == 'true'
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          OUT=$(python publish_spapi_feed.py \
+            --file amazon_es_listings.json \
+            --feed-type JSON_LISTINGS_FEED \
+            --marketplace A1RKKUPIHCS9HS)
+          echo "$OUT"
+          FEED_ID=$(echo "$OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*' || true)
+          test -n "$FEED_ID"
+          echo "FEED_ID_ES=$FEED_ID" >> $GITHUB_ENV
+
+      - name: Check feed processing status (ES)
+        if: steps.check_es.outputs.changed == 'true'
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          set -e
+          sleep 20
+          python check_spapi_feed.py --feed-id "$FEED_ID_ES"
+          mv -f feed_status.json feed_status_es.json || true
+          mv -f feed_processing_report.txt feed_processing_report_es.txt || true
+          mv -f feed_document_meta.json feed_document_meta_es.json || true
+
+      - name: Upload artifacts (ES)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: es-feed-artifacts
+          path: |
+            amazon_es_listings.json
+            amazon_es_b2c.csv
+            amazon_es_b2b.csv
+            feed_status_es.json
+            feed_processing_report_es.txt
+            feed_document_meta_es.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Fail if feed report contains errors (ES)
+        if: steps.check_es.outputs.changed == 'true'
+        run: |
+          set -e
+          python - << 'PY'
+          import json, sys, pathlib
+          p = pathlib.Path("feed_processing_report_es.txt")
+          if not p.exists():
+              print("Missing report -> fail")
+              sys.exit(1)
+          obj = json.loads(p.read_text(encoding="utf-8", errors="replace").strip())
+          errors = int((obj.get("summary") or {}).get("errors") or 0)
+          print("Report summary ES errors=", errors)
+          if errors > 0:
+              print("Issues:", obj.get("issues", [])[:50])
+              sys.exit(1)
+          PY
+
+      - name: Upload amazon_es_listings.json to Drive (backup)
+        if: always()
+        env:
+          FILE_ID: ${{ secrets.AMAZON_ES_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_es_listings.json
+        run: |
+          set -e
+          test -n "$FILE_ID"
+          test -f "$LOCAL_FILE"
+          python upload_to_drive.py
