@@ -2,18 +2,18 @@ import csv
 import json
 import os
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ---- CONFIG ----
-SHEET_SELECTION = os.environ.get("SHEET_SELECTION_NAME", "SELEZIONE")  # puoi override via env
+SHEET_SELECTION = os.environ.get("SHEET_SELECTION_NAME", "SELEZIONE")  # override via env
 SHEET_SETTINGS = os.environ.get("SHEET_SETTINGS_NAME", "settings")
 INPUT_FILTERED = "filtered.csv"
 SUPPLIERS_FILE = "suppliers.csv"
 
-# Se true, se non trova nessun match tra SELEZIONE e FILTERED -> fallisce (utile per debug)
+# Se true e non trova match tra SELEZIONE e FILTERED -> fail (debug)
 FAIL_IF_NO_MATCH = (os.environ.get("FAIL_IF_NO_MATCH", "0").strip() == "1")
 
 
@@ -47,10 +47,9 @@ def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
 
 
 def clean_str(x: Any) -> str:
-    # normalizza spazi + NBSP + BOM eventuali
     s = str(x or "")
-    s = s.replace("\ufeff", "")
-    s = s.replace("\u00a0", " ")
+    s = s.replace("\ufeff", "")   # BOM
+    s = s.replace("\u00a0", " ")  # NBSP
     return s.strip()
 
 
@@ -66,7 +65,7 @@ def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]
 
 
 def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
-    out = {}
+    out: Dict[str, str] = {}
     for r in rows:
         if len(r) < 2:
             continue
@@ -78,7 +77,6 @@ def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
 
 
 def build_index(header: List[str]) -> Dict[str, int]:
-    # indice case-insensitive
     return {clean_str(h).lower(): i for i, h in enumerate(header)}
 
 
@@ -101,14 +99,12 @@ def get_setting(settings: Dict[str, str], key: str, country: str, default: str) 
 
 
 def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired: str) -> str:
-    # prova a trovare il tab col nome indipendente da maiuscole/minuscole
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     tabs = [s.get("properties", {}).get("title", "") for s in (meta.get("sheets") or [])]
     desired_l = desired.strip().lower()
     for t in tabs:
         if t.strip().lower() == desired_l:
             return t
-    # fallback: ritorna quello richiesto, ma logga
     print(f"WARNING: tab '{desired}' not found exactly. Available tabs: {tabs}")
     return desired
 
@@ -177,10 +173,7 @@ def detect_delim_from_first_line(first_line: str) -> str:
 
 
 def normalize_fieldnames(fieldnames: List[str]) -> Dict[str, str]:
-    """
-    Return map: normalized_key -> real_fieldname
-    """
-    m = {}
+    m: Dict[str, str] = {}
     for f in fieldnames or []:
         norm = clean_str(f).lower().replace(" ", "_")
         m[norm] = f
@@ -188,14 +181,10 @@ def normalize_fieldnames(fieldnames: List[str]) -> Dict[str, str]:
 
 
 def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str]:
-    """
-    candidates are normalized (lower, underscores)
-    """
     for c in candidates:
         c0 = c.lower().replace(" ", "_")
         if c0 in field_map:
             return field_map[c0]
-    # fallback: any field containing token
     for k, real in field_map.items():
         for c in candidates:
             if c.lower().replace(" ", "_") in k:
@@ -204,7 +193,6 @@ def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str
 
 
 def norm_sku(s: str) -> str:
-    # sku normalizzato per matching
     return clean_str(s)
 
 
@@ -229,18 +217,15 @@ def main():
     out_priceinv = f"amazon_{country}_price_quantity.txt"   # legacy/debug
     out_listings = f"amazon_{country}_listings.json"        # JSON_LISTINGS_FEED
 
-    # suppliers maps
     supplier_handling = load_supplier_handling_max_days(SUPPLIERS_FILE)
     supplier_ship_cost = load_supplier_ship_cost_b2c(SUPPLIERS_FILE)
 
-    # Google Sheets
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
         scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
     )
     sheets = build("sheets", "v4", credentials=creds)
 
-    # tab name normalization (case-insensitive)
     sel_tab = find_sheet_tab_case_insensitive(sheets, spreadsheet_id, SHEET_SELECTION)
     settings_tab = find_sheet_tab_case_insensitive(sheets, spreadsheet_id, SHEET_SETTINGS)
 
@@ -267,15 +252,11 @@ def main():
     header = sel_rows[0]
     idx = build_index(header)
 
-    # supporta variazioni intestazioni publish
-    # esempio: publish_b2c, publish b2c, PUBLISH_B2C...
     def get_publish(row: List[str], key_candidates: List[str]) -> bool:
         for k in key_candidates:
-            # match diretto se esiste
             v = get_cell(row, idx, k, default="")
             if v != "":
                 return norm_yes(v)
-        # fallback: cerca colonna che contiene publish + b2c/b2b
         for col_name in idx.keys():
             cn = col_name.replace(" ", "_")
             if "publish" in cn:
@@ -298,7 +279,7 @@ def main():
 
     selected = pub_b2c | pub_b2b
     print(f"DEBUG selection sizes: pub_b2c={len(pub_b2c)} pub_b2b={len(pub_b2b)} selected_total={len(selected)}")
-    if len(selected) > 0:
+    if selected:
         print("DEBUG selection sample:", list(selected)[:10])
 
     # ---- filtered.csv ----
@@ -323,12 +304,10 @@ def main():
         if not sku_field:
             raise RuntimeError(f"SKU column not found in filtered.csv header: {reader.fieldnames}")
 
-        # counters
         skipped_missing_sku = 0
         skipped_not_selected = 0
         skipped_missing_fields = 0
         skipped_bad_base_qty = 0
-        matched = 0
 
         rows_b2c = 0
         rows_b2b = 0
@@ -337,7 +316,6 @@ def main():
         listings_messages: List[dict] = []
         msg_id = 1
 
-        # per report di “selezionati ma non trovati”
         found_selected = set()
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
@@ -392,16 +370,13 @@ def main():
                     skipped_bad_base_qty += 1
                     continue
 
-                matched += 1
-
                 sup = supplier_code_from_sku(sku)
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
-                # Prezzo finale: (base * markup + ship) * IVA
+                # prezzo finale: (base * markup + ship) * IVA
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
-                # B2C CSV
                 if sku in pub_b2c:
                     w1.writerow({
                         "sku": sku,
@@ -411,7 +386,6 @@ def main():
                     })
                     rows_b2c += 1
 
-                # B2B CSV
                 if sku in pub_b2b:
                     b2b = money(b2c * b2b_mul, round_decimals)
                     q2 = money(b2c * qty2_mul, round_decimals)
@@ -427,11 +401,11 @@ def main():
                     })
                     rows_b2b += 1
 
-                # legacy/debug tab feed
+                # legacy/debug tab feed (non usato come feed SP-API)
                 w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
 
-                # JSON_LISTINGS_FEED: aggiorno quantity + price (no merchant_shipping_group)
+                # JSON_LISTINGS_FEED: quantity + price (NO merchant_shipping_group)
                 listings_messages.append({
                     "messageId": msg_id,
                     "sku": sku,
@@ -462,7 +436,6 @@ def main():
                 })
                 msg_id += 1
 
-    # report “selezionati ma non trovati”
     missing = sorted(list(selected - found_selected))
     print(f"DEBUG matched_selected={len(found_selected)} missing_selected={len(missing)}")
     if missing:
@@ -473,7 +446,6 @@ def main():
     if FAIL_IF_NO_MATCH and len(found_selected) == 0 and len(selected) > 0:
         raise RuntimeError("No selected SKUs were found in filtered.csv (FAIL_IF_NO_MATCH=1)")
 
-    # write JSON listings feed
     listings_obj = {
         "header": {
             "sellerId": seller_id,
