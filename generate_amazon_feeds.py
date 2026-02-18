@@ -8,8 +8,10 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ---- CONFIG ----
-SHEET_SELECTION = os.environ.get("SHEET_SELECTION_NAME", "SELEZIONE")  # override via env
-SHEET_SETTINGS = os.environ.get("SHEET_SETTINGS_NAME", "settings")
+COUNTRY = (os.environ.get("COUNTRY") or "it").strip().lower()
+SHEET_SELECTION = os.environ.get("SHEET_SELECTION_NAME", f"SELEZIONE_{COUNTRY.upper()}")
+# override via env
+SHEET_SETTINGS = os.environ.get("SHEET_SETTINGS_NAME", "SETTINGS")
 INPUT_FILTERED = "filtered.csv"
 SUPPLIERS_FILE = "suppliers.csv"
 
