@@ -73,8 +73,7 @@ jobs:
             new_skus_0930.csv
           if-no-files-found: warn
           retention-days: 3
-
-    it:
+  it:
     needs: build_common
     runs-on: ubuntu-latest
     steps:
@@ -319,7 +318,6 @@ jobs:
           set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
-
   de:
     needs: build_common
     runs-on: ubuntu-latest
