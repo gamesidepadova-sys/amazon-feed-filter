@@ -36,6 +36,14 @@ jobs:
           ls -lh filtered.csv
           head -n 2 filtered.csv | cat
 
+      - name: Upload filtered.csv artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: filtered-csv
+          path: filtered.csv
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Write service account JSON to file
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
