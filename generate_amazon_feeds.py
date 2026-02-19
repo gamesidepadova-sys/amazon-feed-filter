@@ -419,7 +419,7 @@ def main():
                             "path": "/attributes/fulfillment_availability",
                             "value": [{
                                 "fulfillment_channel_code": "DEFAULT",
-                                "quantity": qty
+                                "quantity": qty,
                                 "handling_time": handling
                             }]
                         },
