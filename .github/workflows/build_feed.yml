@@ -74,11 +74,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-  it:
+    it:
     needs: build_common
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download filtered.csv artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: filtered-csv
+          path: .
+
+      - name: Verify filtered.csv
+        run: |
+          set -e
+          ls -lh filtered.csv
+          head -n 2 filtered.csv | cat
 
       - name: Install Python deps (Google + SP-API)
         run: |
@@ -190,12 +202,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download filtered.csv artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: filtered-csv
+          path: .
+
+      - name: Verify filtered.csv
+        run: |
+          set -e
+          ls -lh filtered.csv
+          head -n 2 filtered.csv | cat
+
       - name: Install Python deps (Google + SP-API)
         run: |
           set -e
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
           pip install requests botocore
+
       - name: Write service account JSON to file
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
@@ -299,12 +325,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download filtered.csv artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: filtered-csv
+          path: .
+
+      - name: Verify filtered.csv
+        run: |
+          set -e
+          ls -lh filtered.csv
+          head -n 2 filtered.csv | cat
+
       - name: Install Python deps (Google + SP-API)
         run: |
           set -e
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
           pip install requests botocore
+
       - name: Write service account JSON to file
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
@@ -408,12 +448,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download filtered.csv artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: filtered-csv
+          path: .
+
+      - name: Verify filtered.csv
+        run: |
+          set -e
+          ls -lh filtered.csv
+          head -n 2 filtered.csv | cat
+
       - name: Install Python deps (Google + SP-API)
         run: |
           set -e
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
           pip install requests botocore
+
       - name: Write service account JSON to file
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
