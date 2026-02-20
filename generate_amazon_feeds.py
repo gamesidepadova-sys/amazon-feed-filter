@@ -10,12 +10,10 @@ from googleapiclient.discovery import build
 # ---- CONFIG ----
 COUNTRY = (os.environ.get("COUNTRY") or "it").strip().lower()
 SHEET_SELECTION = os.environ.get("SHEET_SELECTION_NAME", f"SELEZIONE_{COUNTRY.upper()}")
-# override via env
 SHEET_SETTINGS = os.environ.get("SHEET_SETTINGS_NAME", "SETTINGS")
+SHEET_SUPPLIERS = "SUPPLIER_CODES"   # <--- USIAMO QUESTO
 INPUT_FILTERED = "filtered.csv"
-SUPPLIERS_FILE = "suppliers.csv"
 
-# Se true e non trova match tra SELEZIONE e FILTERED -> fail (debug)
 FAIL_IF_NO_MATCH = (os.environ.get("FAIL_IF_NO_MATCH", "0").strip() == "1")
 
 
@@ -50,8 +48,8 @@ def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
 
 def clean_str(x: Any) -> str:
     s = str(x or "")
-    s = s.replace("\ufeff", "")   # BOM
-    s = s.replace("\u00a0", " ")  # NBSP
+    s = s.replace("\ufeff", "")
+    s = s.replace("\u00a0", " ")
     return s.strip()
 
 
@@ -112,53 +110,36 @@ def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired
 
 
 # ----------------------------
-# Suppliers helpers
+# NEW: Load suppliers from Google Sheet
 # ----------------------------
-def _norm_bool(x: Any) -> bool:
-    return clean_str(x).lower() in {"1", "true", "yes", "y"}
+def load_supplier_sheet(service, spreadsheet_id: str, sheet_name: str):
+    rows = read_sheet(service, spreadsheet_id, sheet_name)
+    if not rows:
+        print(f"WARNING: supplier sheet '{sheet_name}' empty")
+        return {}, {}
 
+    header = rows[0]
+    idx = build_index(header)
 
-def supplier_code_from_sku(sku: str) -> str:
-    parts = (sku or "").split("_")
-    return parts[1] if len(parts) >= 2 else ""
+    out_handling = {}
+    out_ship = {}
 
+    for r in rows[1:]:
+        code = clean_str(get_cell(r, idx, "supplier_code"))
+        if not code:
+            continue
 
-def load_supplier_handling_max_days(path: str) -> Dict[str, int]:
-    out: Dict[str, int] = {}
-    try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                if not _norm_bool(row.get("active")):
-                    continue
-                code = clean_str(row.get("supplier_code"))
-                if not code:
-                    continue
-                try:
-                    out[code] = int(clean_str(row.get("lead_b2c_max_days") or "2"))
-                except Exception:
-                    out[code] = 2
-    except FileNotFoundError:
-        pass
-    return out
+        active = clean_str(get_cell(r, idx, "active", "1")).lower()
+        if active in {"0", "no", "false"}:
+            continue
 
+        handling = to_int(get_cell(r, idx, "lead_b2c_max_days"), 2)
+        ship = to_dec(get_cell(r, idx, "ship_cost_b2c_eur"), Decimal("0"))
 
-def load_supplier_ship_cost_b2c(path: str) -> Dict[str, Decimal]:
-    out: Dict[str, Decimal] = {}
-    try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                code = clean_str(row.get("supplier_code"))
-                if not code:
-                    continue
-                try:
-                    out[code] = Decimal(clean_str(row.get("ship_cost_b2c_eur") or "0").replace(",", "."))
-                except Exception:
-                    out[code] = Decimal("0")
-    except FileNotFoundError:
-        pass
-    return out
+        out_handling[code] = handling
+        out_ship[code] = ship
+
+    return out_handling, out_ship
 
 
 # ----------------------------
@@ -208,7 +189,7 @@ def main():
 
     seller_id = clean_str(os.environ.get("AMAZON_SELLER_ID"))
     if not seller_id:
-        raise RuntimeError("AMAZON_SELLER_ID missing (sellerId obbligatorio per JSON_LISTINGS_FEED)")
+        raise RuntimeError("AMAZON_SELLER_ID missing")
 
     country = clean_str(os.environ.get("COUNTRY") or "it").lower()
     if country not in {"it", "de", "fr", "es"}:
@@ -216,11 +197,8 @@ def main():
 
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
-    out_priceinv = f"amazon_{country}_price_quantity.txt"   # legacy/debug
-    out_listings = f"amazon_{country}_listings.json"        # JSON_LISTINGS_FEED
-
-    supplier_handling = load_supplier_handling_max_days(SUPPLIERS_FILE)
-    supplier_ship_cost = load_supplier_ship_cost_b2c(SUPPLIERS_FILE)
+    out_priceinv = f"amazon_{country}_price_quantity.txt"
+    out_listings = f"amazon_{country}_listings.json"
 
     creds = service_account.Credentials.from_service_account_file(
         "sa.json",
@@ -230,6 +208,7 @@ def main():
 
     sel_tab = find_sheet_tab_case_insensitive(sheets, spreadsheet_id, SHEET_SELECTION)
     settings_tab = find_sheet_tab_case_insensitive(sheets, spreadsheet_id, SHEET_SETTINGS)
+    suppliers_tab = find_sheet_tab_case_insensitive(sheets, spreadsheet_id, SHEET_SUPPLIERS)
 
     settings = kv_settings(read_sheet(sheets, spreadsheet_id, settings_tab))
 
@@ -246,10 +225,15 @@ def main():
     qty2_mul = Decimal("1") - qty2_disc_pct / Decimal("100")
     qty4_mul = Decimal("1") - qty4_disc_pct / Decimal("100")
 
+    # ---- LOAD SUPPLIERS FROM GOOGLE SHEET ----
+    supplier_handling, supplier_ship_cost = load_supplier_sheet(
+        sheets, spreadsheet_id, suppliers_tab
+    )
+
     # ---- SELEZIONE ----
     sel_rows = read_sheet(sheets, spreadsheet_id, sel_tab)
     if not sel_rows:
-        raise RuntimeError(f'Sheet "{sel_tab}" empty or missing in GSHEET')
+        raise RuntimeError(f'Sheet "{sel_tab}" empty or missing')
 
     header = sel_rows[0]
     idx = build_index(header)
@@ -280,9 +264,6 @@ def main():
             pub_b2b.add(sku)
 
     selected = pub_b2c | pub_b2b
-    print(f"DEBUG selection sizes: pub_b2c={len(pub_b2c)} pub_b2b={len(pub_b2b)} selected_total={len(selected)}")
-    if selected:
-        print("DEBUG selection sample:", list(selected)[:10])
 
     # ---- filtered.csv ----
     with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
@@ -299,9 +280,6 @@ def main():
         sku_field = pick_field(field_map, ["sku", "seller_sku", "item_sku", "merchant_sku", "sku_id"])
         qty_field = pick_field(field_map, ["quantita", "qty", "quantity", "stock"])
         base_field = pick_field(field_map, ["prezzo_iva_esclusa", "cost", "net_price", "base_price", "price"])
-
-        print("DEBUG filtered.csv fieldnames:", reader.fieldnames)
-        print("DEBUG detected fields:", {"sku": sku_field, "qty": qty_field, "base": base_field})
 
         if not sku_field:
             raise RuntimeError(f"SKU column not found in filtered.csv header: {reader.fieldnames}")
@@ -372,11 +350,10 @@ def main():
                     skipped_bad_base_qty += 1
                     continue
 
-                sup = supplier_code_from_sku(sku)
+                sup = sku.split("_")[1] if "_" in sku else ""
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
                 handling = supplier_handling.get(sup, 2)
 
-                # prezzo finale: (base * markup + ship) * IVA
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
                 if sku in pub_b2c:
@@ -403,11 +380,9 @@ def main():
                     })
                     rows_b2b += 1
 
-                # legacy/debug tab feed (non usato come feed SP-API)
                 w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
 
-                # JSON_LISTINGS_FEED: quantity + price (NO merchant_shipping_group)
                 listings_messages.append({
                     "messageId": msg_id,
                     "sku": sku,
@@ -440,14 +415,8 @@ def main():
                 msg_id += 1
 
     missing = sorted(list(selected - found_selected))
-    print(f"DEBUG matched_selected={len(found_selected)} missing_selected={len(missing)}")
-    if missing:
-        print("DEBUG missing_selected sample (first 50):")
-        for s in missing[:50]:
-            print("  -", s)
-
     if FAIL_IF_NO_MATCH and len(found_selected) == 0 and len(selected) > 0:
-        raise RuntimeError("No selected SKUs were found in filtered.csv (FAIL_IF_NO_MATCH=1)")
+        raise RuntimeError("No selected SKUs were found in filtered.csv")
 
     listings_obj = {
         "header": {
@@ -462,13 +431,8 @@ def main():
 
     print(f"[{country}] Generated {out_b2c} rows={rows_b2c}")
     print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
-    print(f"[{country}] Generated {out_priceinv} (legacy/debug) rows={rows_priceinv}")
+    print(f"[{country}] Generated {out_priceinv} rows={rows_priceinv}")
     print(f"[{country}] Generated {out_listings} messages={len(listings_messages)}")
-
-    print("DEBUG skipped_missing_sku:", skipped_missing_sku)
-    print("DEBUG skipped_not_selected:", skipped_not_selected)
-    print("DEBUG skipped_missing_fields:", skipped_missing_fields)
-    print("DEBUG skipped_bad_base_qty:", skipped_bad_base_qty)
 
 
 if __name__ == "__main__":
