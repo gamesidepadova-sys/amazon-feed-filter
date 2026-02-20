@@ -395,6 +395,7 @@ def main():
                             "value": [{
                                 "fulfillment_channel_code": "DEFAULT",
                                 "quantity": qty,
+                                "availability_type": "NOW",
                                 "handling_time": handling
                             }]
                         },
