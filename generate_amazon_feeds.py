@@ -383,40 +383,22 @@ def main():
                 w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
 
+                # ----------------------------
+                # NEW: PRODUCT_PRICING feed
+                # ----------------------------
                 listings_messages.append({
                     "messageId": msg_id,
                     "sku": sku,
-                    "operationType": "PATCH",
-                    "productType": "PRODUCT",
-                    "patches": [
-                        {
-                            "op": "replace",
-                            "path": "/attributes/fulfillment_availability",
-                            "value": [{
-                                "fulfillment_channel_code": "DEFAULT",
-                                "quantity": qty,
-                                "availability_type": "NOW",
-                                "handling_time": handling
-                            }]
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/lead_time_to_ship_max_days",
-                            "value": handling
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/purchasable_offer",
-                            "value": [{
+                    "operationType": "UPDATE",
+                    "productType": "PRODUCT_PRICING",
+                    "attributes": {
+                        "standard_price": [
+                            {
                                 "currency": "EUR",
-                                "our_price": [{
-                                    "schedule": [{
-                                        "value_with_tax": float(b2c)
-                                    }]
-                                }]
-                            }]
-                        }
-                    ]
+                                "amount": float(b2c)
+                            }
+                        ]
+                    }
                 })
                 msg_id += 1
 
