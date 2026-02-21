@@ -383,40 +383,35 @@ def main():
                 w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
 
-                listings_messages.append({
-                    "messageId": msg_id,
-                    "sku": sku,
-                    "operationType": "PATCH",
-                    "productType": "PRODUCT",
-                    "patches": [
-                        {
-                            "op": "replace",
-                            "path": "/attributes/fulfillment_availability",
-                            "value": [{
-                                "fulfillment_channel_code": "DEFAULT",
-                                "quantity": qty,
-                            }]
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/lead_time_to_ship_max_days",
-                            "value": handling
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/purchasable_offer",
-                            "value": [{
-                                "currency": "EUR",
-                                "our_price": [{
-                                    "schedule": [{
-                                        "value_with_tax": float(b2c)
-                                    }]
-                                }]
-                            }]
-                        }
-                    ]
-                })
-                msg_id += 1
+listings_messages.append({
+    "messageId": msg_id,
+    "sku": sku,
+    "operationType": "PATCH",
+    "productType": "PRODUCT",
+    "patches": [
+        {
+            "op": "replace",
+            "path": "/attributes/fulfillment_availability",
+            "value": [{
+                "fulfillment_channel_code": "DEFAULT",
+                "quantity": qty
+            }]
+        },
+        {
+            "op": "replace",
+            "path": "/attributes/purchasable_offer",
+            "value": [{
+                "currency": "EUR",
+                "our_price": [{
+                    "schedule": [{
+                        "value_with_tax": float(b2c)
+                    }]
+                }]
+            }]
+        }
+    ]
+})
+msg_id += 1
 
     missing = sorted(list(selected - found_selected))
     if FAIL_IF_NO_MATCH and len(found_selected) == 0 and len(selected) > 0:
