@@ -280,147 +280,175 @@ def main():
 
     selected = pub_b2c | pub_b2b
 
-    # ---- filtered.csv ----
-    with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
-        first = fin.readline()
-        fin.seek(0)
-        delim = detect_delim_from_first_line(first)
+# ---- filtered.csv (robusto) ----
+def autodetect_delimiter(sample_line: str) -> str:
+    for d in ["\t", ";", ",", "|"]:
+        if d in sample_line:
+            return d
+    return ","  # fallback
 
-        reader = csv.DictReader(fin, delimiter=delim)
-        if not reader.fieldnames:
-            raise RuntimeError("filtered.csv has no header")
+def normalize_number(value):
+    if value is None:
+        return None
+    s = str(value).strip()
+    for ch in ["\ufeff", "\u00a0"]:
+        s = s.replace(ch, "")
+    s = s.replace(",", ".")
+    cleaned = "".join(c for c in s if c.isdigit() or c == ".")
+    try:
+        return Decimal(cleaned)
+    except:
+        return None
 
-        field_map = normalize_fieldnames(reader.fieldnames)
+def validate_cost(cost: Decimal, sku: str):
+    if cost is None:
+        print(f"[ERRORE] Costo mancante per SKU {sku}")
+        return False
+    if cost <= 0:
+        print(f"[ERRORE] Costo non valido ({cost}) per SKU {sku}")
+        return False
+    if cost > Decimal("200"):
+        print(f"[ATTENZIONE] Costo sospetto ({cost}) per SKU {sku} — possibile errore di colonna")
+    return True
 
-        sku_field = pick_field(field_map, ["sku", "seller_sku", "item_sku", "merchant_sku", "sku_id"])
-        qty_field = pick_field(field_map, ["quantita", "qty", "quantity", "stock"])
-        base_field = pick_field(field_map, ["prezzo_iva_esclusa", "cost", "net_price", "base_price", "price"])
 
-        if not sku_field:
-            raise RuntimeError(f"SKU column not found in filtered.csv header: {reader.fieldnames}")
+with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
+    first_line = fin.readline()
+    fin.seek(0)
+    delim = autodetect_delimiter(first_line)
 
-        skipped_missing_sku = 0
-        skipped_not_selected = 0
-        skipped_missing_fields = 0
-        skipped_bad_base_qty = 0
+    reader = csv.DictReader(fin, delimiter=delim)
+    if not reader.fieldnames:
+        raise RuntimeError("filtered.csv has no header")
 
-        rows_b2c = 0
-        rows_b2b = 0
-        rows_priceinv = 0
+    field_map = normalize_fieldnames(reader.fieldnames)
 
-        listings_messages: List[dict] = []
-        msg_id = 1
+    sku_field = pick_field(field_map, ["sku", "seller_sku", "item_sku", "merchant_sku", "sku_id"])
+    qty_field = pick_field(field_map, ["quantita", "qty", "quantity", "stock"])
+    base_field = pick_field(field_map, ["prezzo_iva_esclusa", "cost", "net_price", "base_price", "price"])
 
-        found_selected = set()
+    if not sku_field:
+        raise RuntimeError(f"SKU column not found in filtered.csv header: {reader.fieldnames}")
 
-        with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
-             open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
-             open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
+    skipped_missing_sku = 0
+    skipped_not_selected = 0
+    skipped_missing_fields = 0
+    skipped_bad_base_qty = 0
 
-            w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
-            w2 = csv.DictWriter(f2, [
-                "sku", "price_b2c_eur", "price_b2b_eur",
-                "qty2_price_eur", "qty4_price_eur", "qty_available", "country"
-            ])
-            w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
+    rows_b2c = 0
+    rows_b2b = 0
+    rows_priceinv = 0
 
-            w1.writeheader()
-            w2.writeheader()
-            w3.writerow([
-                "sku",
-                "price",
-                "minimum-seller-allowed-price",
-                "maximum-seller-allowed-price",
-                "quantity",
-                "fulfillment-channel",
-                "handling-time",
-            ])
+    listings_messages: List[dict] = []
+    msg_id = 1
 
-            for row in reader:
-                sku = norm_sku(row.get(sku_field))
-                if not sku:
-                    skipped_missing_sku += 1
-                    continue
+    found_selected = set()
 
-                if sku not in selected:
-                    skipped_not_selected += 1
-                    continue
+    with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
+         open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
+         open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
 
-                found_selected.add(sku)
+        w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
+        w2 = csv.DictWriter(f2, [
+            "sku", "price_b2c_eur", "price_b2b_eur",
+            "qty2_price_eur", "qty4_price_eur", "qty_available", "country"
+        ])
+        w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
 
-                if not qty_field or not base_field:
-                    skipped_missing_fields += 1
-                    continue
+        w1.writeheader()
+        w2.writeheader()
+        w3.writerow([
+            "sku",
+            "price",
+            "minimum-seller-allowed-price",
+            "maximum-seller-allowed-price",
+            "quantity",
+            "fulfillment-channel",
+            "handling-time",
+        ])
 
-                raw_base = row.get(base_field)
-                raw_qty = row.get(qty_field)
-                if raw_base is None or raw_qty is None:
-                    skipped_missing_fields += 1
-                    continue
+        for row in reader:
+            sku = norm_sku(row.get(sku_field))
+            if not sku:
+                skipped_missing_sku += 1
+                continue
 
-                base = to_dec_robust(raw_base)
-                qty = to_int(raw_qty)
+            if sku not in selected:
+                skipped_not_selected += 1
+                continue
 
-                if base <= 0 or qty < 0:
-                    skipped_bad_base_qty += 1
-                    continue
+            found_selected.add(sku)
 
-                sup = sku.split("_")[1] if "_" in sku else ""
-                ship = supplier_ship_cost.get(sup, Decimal("0"))
-                handling = supplier_handling.get(sup, 2)
+            if not qty_field or not base_field:
+                skipped_missing_fields += 1
+                continue
 
-                # Calcolo B2C e B2B
-                b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
+            raw_base = row.get(base_field)
+            raw_qty = row.get(qty_field)
 
-                if sku in pub_b2c:
-                    w1.writerow({
-                        "sku": sku,
-                        "price_b2c_eur": f"{b2c:.2f}",
-                        "qty_available": qty,
-                        "country": country
-                    })
-                    rows_b2c += 1
+            base = normalize_number(raw_base)
+            qty = to_int(raw_qty)
 
-                if sku in pub_b2b:
-                    b2b = money(b2c * b2b_mul, round_decimals)
-                    q2 = money(b2c * qty2_mul, round_decimals)
-                    q4 = money(b2c * qty4_mul, round_decimals)
-                    w2.writerow({
-                        "sku": sku,
-                        "price_b2c_eur": f"{b2c:.2f}",
-                        "price_b2b_eur": f"{b2b:.2f}",
-                        "qty2_price_eur": f"{q2:.2f}",
-                        "qty4_price_eur": f"{q4:.2f}",
-                        "qty_available": qty,
-                        "country": country
-                    })
-                    rows_b2b += 1
+            if not validate_cost(base, sku) or qty < 0:
+                skipped_bad_base_qty += 1
+                continue
 
-                w3.writerow([sku, f"{b2c:.2f}", "", "", str(qty), "DEFAULT", str(handling)])
-                rows_priceinv += 1
+            sup = sku.split("_")[1] if "_" in sku else ""
+            ship = supplier_ship_cost.get(sup, Decimal("0"))
+            handling = supplier_handling.get(sup, 2)
 
-                listings_messages.append({
-                    "messageId": msg_id,
+            # Calcolo B2C
+            b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
+
+            if sku in pub_b2c:
+                w1.writerow({
                     "sku": sku,
-                    "operationType": "PATCH",
-                    "productType": "PRODUCT",
-                    "patches": [
-                        {
-                            "op": "replace",
-                            "path": "/attributes/fulfillment_availability",
-                            "value": [{"fulfillment_channel_code": "DEFAULT","quantity": qty}]
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/attributes/purchasable_offer",
-                            "value": [{
-                                "currency": "EUR",
-                                "our_price": [{"schedule": [{"value_with_tax": f"{b2c:.2f}"}]}]
-                            }]
-                        }
-                    ]
+                    "price_b2c_eur": f"{b2c:.2f}",
+                    "qty_available": qty,
+                    "country": country
                 })
-                msg_id += 1
+                rows_b2c += 1
+
+            if sku in pub_b2b:
+                b2b = money(b2c * b2b_mul, round_decimals)
+                q2 = money(b2c * qty2_mul, round_decimals)
+                q4 = money(b2c * qty4_mul, round_decimals)
+                w2.writerow({
+                    "sku": sku,
+                    "price_b2c_eur": f"{b2c:.2f}",
+                    "price_b2b_eur": f"{b2b:.2f}",
+                    "qty2_price_eur": f"{q2:.2f}",
+                    "qty4_price_eur": f"{q4:.2f}",
+                    "qty_available": qty,
+                    "country": country
+                })
+                rows_b2b += 1
+
+            w3.writerow([sku, f"{b2c:.2f}", "", "", str(qty), "DEFAULT", str(handling)])
+            rows_priceinv += 1
+
+            listings_messages.append({
+                "messageId": msg_id,
+                "sku": sku,
+                "operationType": "PATCH",
+                "productType": "PRODUCT",
+                "patches": [
+                    {
+                        "op": "replace",
+                        "path": "/attributes/fulfillment_availability",
+                        "value": [{"fulfillment_channel_code": "DEFAULT","quantity": qty}]
+                    },
+                    {
+                        "op": "replace",
+                        "path": "/attributes/purchasable_offer",
+                        "value": [{
+                            "currency": "EUR",
+                            "our_price": [{"schedule": [{"value_with_tax": f"{b2c:.2f}"}]}]
+                        }]
+                    }
+                ]
+            })
+            msg_id += 1
 
     missing = sorted(list(selected - found_selected))
     if FAIL_IF_NO_MATCH and len(found_selected) == 0 and len(selected) > 0:
