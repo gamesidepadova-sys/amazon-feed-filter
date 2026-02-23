@@ -16,7 +16,6 @@ INPUT_FILTERED = "filtered.csv"
 
 FAIL_IF_NO_MATCH = (os.environ.get("FAIL_IF_NO_MATCH", "0").strip() == "1")
 
-
 # ----------------------------
 # Helpers base
 # ----------------------------
@@ -24,17 +23,14 @@ def money(x: Decimal, decimals: int = 2) -> Decimal:
     q = Decimal("1." + "0" * decimals)
     return x.quantize(q, rounding=ROUND_HALF_UP)
 
-
 def norm_yes(x: Any) -> bool:
     return str(x or "").strip().upper() == "YES"
-
 
 def to_int(x: Any, default: int = 0) -> int:
     try:
         return int(str(x).strip())
     except Exception:
         return default
-
 
 def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
     try:
@@ -45,13 +41,11 @@ def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
     except Exception:
         return default
 
-
 def clean_str(x: Any) -> str:
     s = str(x or "")
     s = s.replace("\ufeff", "")
     s = s.replace("\u00a0", " ")
     return s.strip()
-
 
 # ----------------------------
 # Google Sheets helpers
@@ -62,7 +56,6 @@ def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]
         range=sheet_name
     ).execute()
     return resp.get("values", [])
-
 
 def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
     out: Dict[str, str] = {}
@@ -75,17 +68,14 @@ def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
             out[k] = v
     return out
 
-
 def build_index(header: List[str]) -> Dict[str, int]:
     return {clean_str(h).lower(): i for i, h in enumerate(header)}
-
 
 def get_cell(row: List[str], idx: Dict[str, int], key: str, default: str = "") -> str:
     i = idx.get(key.lower(), -1)
     if i < 0 or i >= len(row):
         return default
     return clean_str(row[i])
-
 
 def get_setting(settings: Dict[str, str], key: str, country: str, default: str) -> str:
     key_country = f"{key}_{country}".lower()
@@ -97,7 +87,6 @@ def get_setting(settings: Dict[str, str], key: str, country: str, default: str) 
             return v
     return default
 
-
 def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired: str) -> str:
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     tabs = [s.get("properties", {}).get("title", "") for s in (meta.get("sheets") or [])]
@@ -108,9 +97,8 @@ def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired
     print(f"WARNING: tab '{desired}' not found exactly. Available tabs: {tabs}")
     return desired
 
-
 # ----------------------------
-# NEW: Load suppliers from Google Sheet
+# Load suppliers from Google Sheet
 # ----------------------------
 def load_supplier_sheet(service, spreadsheet_id: str, sheet_name: str):
     rows = read_sheet(service, spreadsheet_id, sheet_name)
@@ -141,7 +129,6 @@ def load_supplier_sheet(service, spreadsheet_id: str, sheet_name: str):
 
     return out_handling, out_ship
 
-
 # ----------------------------
 # CSV helpers
 # ----------------------------
@@ -154,14 +141,12 @@ def detect_delim_from_first_line(first_line: str) -> str:
         return ";"
     return ","
 
-
 def normalize_fieldnames(fieldnames: List[str]) -> Dict[str, str]:
     m: Dict[str, str] = {}
     for f in fieldnames or []:
         norm = clean_str(f).lower().replace(" ", "_")
         m[norm] = f
     return m
-
 
 def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str]:
     for c in candidates:
@@ -174,10 +159,21 @@ def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str
                 return real
     return None
 
-
 def norm_sku(s: str) -> str:
     return clean_str(s)
 
+# ----------------------------
+# Handling “safe” function
+# ----------------------------
+def get_handling_safe(sku: str, supplier_handling: dict, existing_priceinv: dict) -> int:
+    """
+    Mantiene l’handling time dei feed precedenti, 
+    altrimenti prende dal supplier_codes, fallback = 2
+    """
+    if sku in existing_priceinv:
+        return int(existing_priceinv[sku])
+    sup = sku.split("_")[1] if "_" in sku else ""
+    return supplier_handling.get(sup, 2)
 
 # ----------------------------
 # MAIN
@@ -229,6 +225,18 @@ def main():
     supplier_handling, supplier_ship_cost = load_supplier_sheet(
         sheets, spreadsheet_id, suppliers_tab
     )
+
+    # ---- Carica feed precedente (se esiste) ----
+    existing_priceinv = {}
+    try:
+        with open(f"amazon_{country}_price_quantity.txt", newline="", encoding="utf-8") as f:
+            reader_prev = csv.reader(f, delimiter="\t")
+            for row in reader_prev:
+                if len(row) < 7:
+                    continue
+                existing_priceinv[row[0].strip()] = row[6].strip()
+    except FileNotFoundError:
+        pass  # nessun feed precedente trovato
 
     # ---- SELEZIONE ----
     sel_rows = read_sheet(sheets, spreadsheet_id, sel_tab)
@@ -352,7 +360,7 @@ def main():
 
                 sup = sku.split("_")[1] if "_" in sku else ""
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
-                handling = supplier_handling.get(sup, 2)
+                handling = get_handling_safe(sku, supplier_handling, existing_priceinv)
 
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
@@ -393,6 +401,7 @@ def main():
                             "op": "replace",
                             "path": "/attributes/fulfillment_availability",
                             "value": [{
+
                                 "fulfillment_channel_code": "DEFAULT",
                                 "quantity": qty
                             }]
@@ -433,7 +442,6 @@ def main():
     print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
     print(f"[{country}] Generated {out_priceinv} rows={rows_priceinv}")
     print(f"[{country}] Generated {out_listings} messages={len(listings_messages)}")
-
 
 if __name__ == "__main__":
     main()
