@@ -1,7 +1,7 @@
 import csv
 import json
 import os
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Dict, List, Any, Optional
 
 from google.oauth2 import service_account
@@ -16,6 +16,7 @@ INPUT_FILTERED = "filtered.csv"
 
 FAIL_IF_NO_MATCH = (os.environ.get("FAIL_IF_NO_MATCH", "0").strip() == "1")
 
+
 # ----------------------------
 # Helpers base
 # ----------------------------
@@ -23,8 +24,10 @@ def money(x: Decimal, decimals: int = 2) -> Decimal:
     q = Decimal("1." + "0" * decimals)
     return x.quantize(q, rounding=ROUND_HALF_UP)
 
+
 def norm_yes(x: Any) -> bool:
     return str(x or "").strip().upper() == "YES"
+
 
 def to_int(x: Any, default: int = 0) -> int:
     try:
@@ -32,20 +35,38 @@ def to_int(x: Any, default: int = 0) -> int:
     except Exception:
         return default
 
-def to_dec(x: Any, default: Decimal = Decimal("0")) -> Decimal:
-    try:
-        s = str(x).strip().replace(",", ".")
-        if not s:
-            return default
-        return Decimal(s)
-    except Exception:
+
+def to_dec_robust(x: Any, default: Decimal = Decimal("0")) -> Decimal:
+    """
+    Converte un valore in Decimal, gestendo:
+    - virgole come separatore decimale
+    - punti come separatore decimale
+    - spazi o caratteri invisibili (\ufeff, \u00a0)
+    - valori vuoti o malformati
+    """
+    if x is None:
         return default
+    s = str(x).strip()
+    for ch in ["\ufeff", "\u00a0"]:
+        s = s.replace(ch, "")
+    s = s.replace(",", ".")
+    s_clean = ""
+    for c in s:
+        if c.isdigit() or c == ".":
+            s_clean += c
+    try:
+        return Decimal(s_clean)
+    except InvalidOperation:
+        print(f"WARNING: valore '{x}' non convertibile a Decimal, uso default {default}")
+        return default
+
 
 def clean_str(x: Any) -> str:
     s = str(x or "")
     s = s.replace("\ufeff", "")
     s = s.replace("\u00a0", " ")
     return s.strip()
+
 
 # ----------------------------
 # Google Sheets helpers
@@ -56,6 +77,7 @@ def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]
         range=sheet_name
     ).execute()
     return resp.get("values", [])
+
 
 def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
     out: Dict[str, str] = {}
@@ -68,14 +90,17 @@ def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
             out[k] = v
     return out
 
+
 def build_index(header: List[str]) -> Dict[str, int]:
     return {clean_str(h).lower(): i for i, h in enumerate(header)}
+
 
 def get_cell(row: List[str], idx: Dict[str, int], key: str, default: str = "") -> str:
     i = idx.get(key.lower(), -1)
     if i < 0 or i >= len(row):
         return default
     return clean_str(row[i])
+
 
 def get_setting(settings: Dict[str, str], key: str, country: str, default: str) -> str:
     key_country = f"{key}_{country}".lower()
@@ -87,6 +112,7 @@ def get_setting(settings: Dict[str, str], key: str, country: str, default: str) 
             return v
     return default
 
+
 def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired: str) -> str:
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     tabs = [s.get("properties", {}).get("title", "") for s in (meta.get("sheets") or [])]
@@ -96,6 +122,7 @@ def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired
             return t
     print(f"WARNING: tab '{desired}' not found exactly. Available tabs: {tabs}")
     return desired
+
 
 # ----------------------------
 # Load suppliers from Google Sheet
@@ -122,12 +149,13 @@ def load_supplier_sheet(service, spreadsheet_id: str, sheet_name: str):
             continue
 
         handling = to_int(get_cell(r, idx, "lead_b2c_max_days"), 2)
-        ship = to_dec(get_cell(r, idx, "ship_cost_b2c_eur"), Decimal("0"))
+        ship = to_dec_robust(get_cell(r, idx, "ship_cost_b2c_eur"), Decimal("0"))
 
         out_handling[code] = handling
         out_ship[code] = ship
 
     return out_handling, out_ship
+
 
 # ----------------------------
 # CSV helpers
@@ -141,12 +169,14 @@ def detect_delim_from_first_line(first_line: str) -> str:
         return ";"
     return ","
 
+
 def normalize_fieldnames(fieldnames: List[str]) -> Dict[str, str]:
     m: Dict[str, str] = {}
     for f in fieldnames or []:
         norm = clean_str(f).lower().replace(" ", "_")
         m[norm] = f
     return m
+
 
 def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str]:
     for c in candidates:
@@ -159,21 +189,10 @@ def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str
                 return real
     return None
 
+
 def norm_sku(s: str) -> str:
     return clean_str(s)
 
-# ----------------------------
-# Handling “safe” function
-# ----------------------------
-def get_handling_safe(sku: str, supplier_handling: dict, existing_priceinv: dict) -> int:
-    """
-    Mantiene l’handling time dei feed precedenti, 
-    altrimenti prende dal supplier_codes, fallback = 2
-    """
-    if sku in existing_priceinv:
-        return int(existing_priceinv[sku])
-    sup = sku.split("_")[1] if "_" in sku else ""
-    return supplier_handling.get(sup, 2)
 
 # ----------------------------
 # MAIN
@@ -208,11 +227,11 @@ def main():
 
     settings = kv_settings(read_sheet(sheets, spreadsheet_id, settings_tab))
 
-    vat_pct = to_dec(get_setting(settings, "vat_rate_pct", country, "22"))
-    b2c_markup_pct = to_dec(get_setting(settings, "b2c_markup_pct", country, "28"))
-    b2b_disc_pct = to_dec(get_setting(settings, "b2b_discount_vs_b2c_pct", country, "7"))
-    qty2_disc_pct = to_dec(get_setting(settings, "qty2_discount_vs_b2c_pct", country, "8"))
-    qty4_disc_pct = to_dec(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9"))
+    vat_pct = to_dec_robust(get_setting(settings, "vat_rate_pct", country, "22"))
+    b2c_markup_pct = to_dec_robust(get_setting(settings, "b2c_markup_pct", country, "28"))
+    b2b_disc_pct = to_dec_robust(get_setting(settings, "b2b_discount_vs_b2c_pct", country, "7"))
+    qty2_disc_pct = to_dec_robust(get_setting(settings, "qty2_discount_vs_b2c_pct", country, "8"))
+    qty4_disc_pct = to_dec_robust(get_setting(settings, "qty4_discount_vs_b2c_pct", country, "9"))
     round_decimals = to_int(get_setting(settings, "price_round_decimals", country, "2"), 2)
 
     vat_mul = Decimal("1") + vat_pct / Decimal("100")
@@ -225,18 +244,6 @@ def main():
     supplier_handling, supplier_ship_cost = load_supplier_sheet(
         sheets, spreadsheet_id, suppliers_tab
     )
-
-    # ---- Carica feed precedente (se esiste) ----
-    existing_priceinv = {}
-    try:
-        with open(f"amazon_{country}_price_quantity.txt", newline="", encoding="utf-8") as f:
-            reader_prev = csv.reader(f, delimiter="\t")
-            for row in reader_prev:
-                if len(row) < 7:
-                    continue
-                existing_priceinv[row[0].strip()] = row[6].strip()
-    except FileNotFoundError:
-        pass  # nessun feed precedente trovato
 
     # ---- SELEZIONE ----
     sel_rows = read_sheet(sheets, spreadsheet_id, sel_tab)
@@ -351,7 +358,7 @@ def main():
                     skipped_missing_fields += 1
                     continue
 
-                base = to_dec(raw_base)
+                base = to_dec_robust(raw_base)
                 qty = to_int(raw_qty)
 
                 if base <= 0 or qty < 0:
@@ -360,14 +367,15 @@ def main():
 
                 sup = sku.split("_")[1] if "_" in sku else ""
                 ship = supplier_ship_cost.get(sup, Decimal("0"))
-                handling = get_handling_safe(sku, supplier_handling, existing_priceinv)
+                handling = supplier_handling.get(sup, 2)
 
+                # Calcolo B2C e B2B
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
                 if sku in pub_b2c:
                     w1.writerow({
                         "sku": sku,
-                        "price_b2c_eur": f"{b2c}",
+                        "price_b2c_eur": f"{b2c:.2f}",
                         "qty_available": qty,
                         "country": country
                     })
@@ -379,16 +387,16 @@ def main():
                     q4 = money(b2c * qty4_mul, round_decimals)
                     w2.writerow({
                         "sku": sku,
-                        "price_b2c_eur": f"{b2c}",
-                        "price_b2b_eur": f"{b2b}",
-                        "qty2_price_eur": f"{q2}",
-                        "qty4_price_eur": f"{q4}",
+                        "price_b2c_eur": f"{b2c:.2f}",
+                        "price_b2b_eur": f"{b2b:.2f}",
+                        "qty2_price_eur": f"{q2:.2f}",
+                        "qty4_price_eur": f"{q4:.2f}",
                         "qty_available": qty,
                         "country": country
                     })
                     rows_b2b += 1
 
-                w3.writerow([sku, f"{b2c}", "", "", str(qty), "DEFAULT", str(handling)])
+                w3.writerow([sku, f"{b2c:.2f}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
 
                 listings_messages.append({
@@ -400,22 +408,14 @@ def main():
                         {
                             "op": "replace",
                             "path": "/attributes/fulfillment_availability",
-                            "value": [{
-
-                                "fulfillment_channel_code": "DEFAULT",
-                                "quantity": qty
-                            }]
+                            "value": [{"fulfillment_channel_code": "DEFAULT","quantity": qty}]
                         },
                         {
                             "op": "replace",
                             "path": "/attributes/purchasable_offer",
                             "value": [{
                                 "currency": "EUR",
-                                "our_price": [{
-                                    "schedule": [{
-                                        "value_with_tax": float(b2c)
-                                    }]
-                                }]
+                                "our_price": [{"schedule": [{"value_with_tax": f"{b2c:.2f}"}]}]
                             }]
                         }
                     ]
@@ -442,6 +442,7 @@ def main():
     print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
     print(f"[{country}] Generated {out_priceinv} rows={rows_priceinv}")
     print(f"[{country}] Generated {out_listings} messages={len(listings_messages)}")
+
 
 if __name__ == "__main__":
     main()
