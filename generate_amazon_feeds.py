@@ -461,4 +461,8 @@ def main():
     print(f"[{country}] Generated {out_b2c} rows={rows_b2c}")
     print(f"[{country}] Generated {out_b2b} rows={rows_b2b}")
     print(f"[{country}] Generated {out_priceinv} rows={rows_priceinv}")
-    print(f
+    print(f"[{country}] Generated {out_listings} messages={len(listings_messages)}")
+
+
+if __name__ == "__main__":
+    main()
