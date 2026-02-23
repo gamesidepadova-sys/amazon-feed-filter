@@ -1,0 +1,42 @@
+name: Check Amazon Prices
+
+on:
+  workflow_dispatch:  # lancio manuale dal tab Actions
+
+jobs:
+  price-check:
+    runs-on: ubuntu-latest
+
+    env:
+      COUNTRY: it
+      GSHEET_ID: ${{ secrets.GSHEET_ID }}
+      AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
+      FAIL_IF_NO_MATCH: "1"
+      GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install google-api-python-client google-auth
+
+      - name: Save Service Account JSON
+        run: echo "${{ secrets.GDRIVE_SA_JSON }}" > sa.json
+
+      - name: Run Price Check
+        run: |
+          python check_prices_report.py
+
+      - name: Upload Report as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: price_check_report
+          path: price_check_report_*.csv
