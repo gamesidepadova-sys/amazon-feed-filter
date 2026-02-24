@@ -186,52 +186,118 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.country }}-files
+          name: amazon-feed-${{ matrix.country }}
           path: |
             amazon_${{ matrix.country }}_listings.json
-            amazon_${{ matrix.country }}_b2c.csv
-            amazon_${{ matrix.country }}_b2b.csv
-            amazon_${{ matrix.country }}_price_quantity.txt
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
-          retention-days: 7
 
-      #######################################################################
-      # BACKUP SU DRIVE — UNO STEP PER PAESE
-      #######################################################################
-      - name: Upload listings.json to Drive (IT)
-        if: always() && matrix.country == 'it'
-        env:
-          FILE_ID: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_it_listings.json
-        run: |
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
+  ###########################################################################
+  # TEST — invio feed JSON PRICING per 1 SKU
+  ###########################################################################
+  pricing_test:
+    runs-on: ubuntu-latest
+    needs: build_common
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Upload listings.json to Drive (FR)
-        if: always() && matrix.country == 'fr'
-        env:
-          FILE_ID: ${{ secrets.AMAZON_FR_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_fr_listings.json
+      - name: Install Python deps (Google + SP-API)
         run: |
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
+          python -m pip install --upgrade pip
+          pip install requests botocore google-api-python-client google-auth google-auth-httplib2
 
-      - name: Upload listings.json to Drive (DE)
-        if: always() && matrix.country == 'de'
-        env:
-          FILE_ID: ${{ secrets.AMAZON_DE_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_de_listings.json
+      - name: Create pricing_test.json
         run: |
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
+          cat > pricing_test.json << 'EOF'
+          {
+            "header": {
+              "sellerId": "AE69GC53PJGW9",
+              "version": "2.0",
+              "issueLocale": "it_IT"
+            },
+            "messages": [
+              {
+                "messageId": 1,
+                "sku": "T_0372_15150238000",
+                "operationType": "PATCH",
+                "productType": "PRODUCT",
+                "patches": [
+                  {
+                    "op": "replace",
+                    "path": "/attributes/purchasable_offer",
+                    "value": [
+                      {
+                        "marketplace_id": "APJ6JRA9NG5V4",
+                        "our_price": [
+                          {
+                            "currency": "EUR",
+                            "value": 395.02,
+                            "schedule": [
+                              {
+                                "start_at": "2020-01-01T00:00:00Z",
+                                "value": 395.02,
+                                "value_with_tax": 395.02
+                              }
+                            ]
+                          }
+                        ],
+                        "business_price": [
+                          {
+                            "currency": "EUR",
+                            "value": 367.37,
+                            "schedule": [
+                              {
+                                "start_at": "2020-01-01T00:00:00Z",
+                                "value": 367.37,
+                                "value_with_tax": 367.37
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
 
-      - name: Upload listings.json to Drive (ES)
-        if: always() && matrix.country == 'es'
+      - name: Send pricing feed
         env:
-          FILE_ID: ${{ secrets.AMAZON_ES_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_es_listings.json
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
+          FEED_OUTPUT=$(python publish_spapi_feed.py \
+            --file pricing_test.json \
+            --feed-type JSON_PRICING_FEED \
+            --marketplace APJ6JRA9NG5V4)
+          echo "$FEED_OUTPUT"
+          FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
+          echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
+
+      - name: Poll feed status
+        env:
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          python check_spapi_feed.py --feed-id $FEED_ID
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pricing-test-results
+          path: |
+            pricing_test.json
+            feed_status.json
+            feed_processing_report.txt
+            feed_document_meta.json
