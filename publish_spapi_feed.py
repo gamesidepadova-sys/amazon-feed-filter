@@ -152,7 +152,7 @@ def upload_document(upload_url: str, file_path: str, content_type: str):
     with open(file_path, "rb") as f:
         data = f.read()
 
-    r = requests.put(upload_url, data=data, headers={"content-type": content_type}, timeout=300)
+    r = requests.put(upload_url, data=data, headers={"content-type": "application/json; charset=UTF-8"}), timeout=300)
 
     if r.status_code >= 400:
         print("UPLOAD ERROR STATUS:", r.status_code, file=sys.stderr)
@@ -176,7 +176,7 @@ def main():
     ap.add_argument("--file", required=True)
     ap.add_argument("--feed-type", required=True)
     ap.add_argument("--marketplace", action="append", required=True)
-    ap.add_argument("--content-type", default="text/tab-separated-values; charset=UTF-8")
+    ap.add_argument("--content-type": "application/json; charset=UTF-8")
     ap.add_argument("--skip-sellers-check", action="store_true")
     args = ap.parse_args()
 
