@@ -244,6 +244,13 @@ jobs:
           set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
+      - name: Upload SP-API debug dump
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+        name: spapi-debug-it
+        path: spapi_request_response.txt
+        if-no-files-found: warn
 
    ###########################################################################
   # 🇫🇷 FRANCE
