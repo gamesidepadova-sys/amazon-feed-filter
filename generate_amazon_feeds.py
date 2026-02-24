@@ -424,11 +424,21 @@ def main():
                     q4 = money(b2c * qty4_mul, round_decimals)
                 
                     # Scrittura nel file B2B (già esistente)
-                    w2.writerow([sku, b2b, q2, q4])
+                    w2.writerow({
+                        "sku": sku,
+                        "price_b2c_eur": f"{b2c:.2f}",
+                        "price_b2b_eur": f"{b2b:.2f}",
+                        "qty2_price_eur": f"{q2:.2f}",
+                        "qty4_price_eur": f"{q4:.2f}",
+                        "qty_available": qty,
+                        "country": country
+                    })
+                    rows_b2b += 1
                 
                     # 🔥 Scrittura nel Business Pricing TXT (nuovo)
                     w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 2, f"{q2:.2f}"])
                     w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 4, f"{q4:.2f}"])
+
 
                         "sku": sku,
                         "price_b2c_eur": f"{b2c:.2f}",
