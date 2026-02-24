@@ -339,7 +339,16 @@ def main():
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
              open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
-             open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
+             open(out_priceinv, "w", encoding="utf-8", newline="") as f3, \
+             open(f"amazon_{country}_business_pricing.txt", "w", encoding="utf-8", newline="") as f4:
+
+            w1 = csv.writer(f1, delimiter="\t", lineterminator="\n")
+            w2 = csv.writer(f2, delimiter="\t", lineterminator="\n")
+            w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
+            w4 = csv.writer(f4, delimiter="\t", lineterminator="\n")
+
+            # intestazione business pricing
+            w4.writerow(["sku", "business-price", "quantity-price-type", "quantity-lower-bound", "quantity-price"])
 
             w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
             w2 = csv.DictWriter(f2, [
@@ -413,7 +422,14 @@ def main():
                     b2b = money(b2c * b2b_mul, round_decimals)
                     q2 = money(b2c * qty2_mul, round_decimals)
                     q4 = money(b2c * qty4_mul, round_decimals)
-                    w2.writerow({
+                
+                    # Scrittura nel file B2B (già esistente)
+                    w2.writerow([sku, b2b, q2, q4])
+                
+                    # 🔥 Scrittura nel Business Pricing TXT (nuovo)
+                    w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 2, f"{q2:.2f}"])
+                    w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 4, f"{q4:.2f}"])
+
                         "sku": sku,
                         "price_b2c_eur": f"{b2c:.2f}",
                         "price_b2b_eur": f"{b2b:.2f}",
