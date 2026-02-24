@@ -55,24 +55,43 @@ def _sanitize_headers(h: dict) -> dict:
             out[k] = v
     return out
 
-
 def signed_json(method: str, url: str, region: str, access_token: str, body):
+    from datetime import datetime, timezone
+    import hashlib
+
     aws_access_key = os.environ["AWS_ACCESS_KEY_ID"]
     aws_secret_key = os.environ["AWS_SECRET_ACCESS_KEY"]
 
+    # Base headers
     headers = _aws_headers(region, access_token)
 
+    # FIX 1: timestamp corretto (UTC, no skew)
+    amz_date = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    headers["x-amz-date"] = amz_date
+
+    # Body handling
     data = None
     body_text = ""
     if body is not None:
         body_text = json.dumps(body, ensure_ascii=False)
         data = body_text.encode("utf-8")
+        payload_hash = hashlib.sha256(data).hexdigest()
+    else:
+        payload_hash = hashlib.sha256(b"").hexdigest()
 
+    # FIX 2: aggiungi x-amz-content-sha256 (robustezza)
+    headers["x-amz-content-sha256"] = payload_hash
+
+    # Build AWS request
     req = AWSRequest(method=method, url=url, data=data, headers=headers)
+
+    # Sign with SigV4
     SigV4Auth(Credentials(aws_access_key, aws_secret_key), SERVICE, region).add_auth(req)
 
+    # Convert headers to dict
     req_headers = dict(req.headers)
 
+    # Perform request
     resp = requests.request(
         method,
         url,
@@ -81,6 +100,7 @@ def signed_json(method: str, url: str, region: str, access_token: str, body):
         timeout=120,
     )
 
+    # Dump on error
     if resp.status_code >= 400:
         dump_path = "spapi_request_response.txt"
         rid = resp.headers.get("x-amzn-RequestId") or resp.headers.get("x-amz-request-id") or ""
@@ -122,7 +142,6 @@ def signed_json(method: str, url: str, region: str, access_token: str, body):
     if resp.text.strip():
         return resp.json()
     return {}
-
 
 def create_feed_document(region: str, access_token: str, content_type: str) -> dict:
     url = f"{EU_ENDPOINT}/feeds/2021-06-30/documents"
