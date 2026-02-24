@@ -259,7 +259,7 @@ def main():
         return True
 
     # ----------------------------
-    # AGGIUNTA FUNZIONE SCHEDULE  ### MODIFICATO
+    # FUNZIONE DEFINITIVA PER I PREZZI (schedule completo)
     # ----------------------------
     def make_price_block(price):
         return [
@@ -268,12 +268,13 @@ def main():
                 "value": float(price),
                 "schedule": [
                     {
-                        "start_at": "2020-01-01T00:00:00Z"
+                        "start_at": "2020-01-01T00:00:00Z",
+                        "value_with_tax": float(price),
+                        "value": float(price)
                     }
                 ]
             }
         ]
-
     with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
         first_line = fin.readline()
         fin.seek(0)
@@ -365,7 +366,7 @@ def main():
                     rows_b2c += 1
 
                 if sku in pub_b2b:
-                    b2b = money(b2c * Decimal("0.91"), round_decimals)   ### MODIFICATO
+                    b2b = money(b2c * Decimal("0.91"), round_decimals)
                     q2 = money(b2c * qty2_mul, round_decimals)
                     q4 = money(b2c * qty4_mul, round_decimals)
 
@@ -386,12 +387,12 @@ def main():
                 # ---- JSON_LISTINGS_FEED ----
                 purchasable_offer = {
                     "marketplace_id": marketplace_id,
-                    "our_price": make_price_block(b2c)   ### MODIFICATO
+                    "our_price": make_price_block(b2c)
                 }
 
                 if sku in pub_b2b:
-                    b2b = money(b2c * Decimal("0.91"), round_decimals)   ### MODIFICATO
-                    purchasable_offer["business_price"] = make_price_block(b2b)   ### MODIFICATO
+                    b2b = money(b2c * Decimal("0.91"), round_decimals)
+                    purchasable_offer["business_price"] = make_price_block(b2b)
 
                 listings_messages.append({
                     "messageId": msg_id,
@@ -417,7 +418,6 @@ def main():
                     ]
                 })
                 msg_id += 1
-
     listings_obj = {
         "header": {
             "sellerId": seller_id,
