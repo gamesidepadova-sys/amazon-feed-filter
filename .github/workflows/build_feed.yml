@@ -72,22 +72,15 @@ jobs:
           - country: it
             marketplace: APJ6JRA9NG5V4
             locale: it_IT
-            listings_file_id: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
-
           - country: fr
             marketplace: A13V1IB3VIYZZH
             locale: fr_FR
-            listings_file_id: ${{ secrets.AMAZON_FR_LISTINGS_JSON_FILE_ID }}
-
           - country: de
             marketplace: A1PA6795UKMFR9
             locale: de_DE
-            listings_file_id: ${{ secrets.AMAZON_DE_LISTINGS_JSON_FILE_ID }}
-
           - country: es
             marketplace: A1RKKUPIHCS9HS
             locale: es_ES
-            listings_file_id: ${{ secrets.AMAZON_ES_LISTINGS_JSON_FILE_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -187,7 +180,7 @@ jobs:
           head -n 120 feed_processing_report.txt || true
 
       #######################################################################
-      # ARTIFACTS + BACKUP
+      # ARTIFACTS
       #######################################################################
       - name: Upload artifacts
         if: always()
@@ -204,11 +197,41 @@ jobs:
             feed_document_meta.json
           retention-days: 7
 
-      - name: Upload listings.json to Drive (backup)
-        if: always()
+      #######################################################################
+      # BACKUP SU DRIVE — UNO STEP PER PAESE
+      #######################################################################
+      - name: Upload listings.json to Drive (IT)
+        if: always() && matrix.country == 'it'
         env:
-          FILE_ID: ${{ matrix.listings_file_id }}
-          LOCAL_FILE: amazon_${{ matrix.country }}_listings.json
+          FILE_ID: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_it_listings.json
+        run: |
+          test -f "$LOCAL_FILE"
+          python upload_to_drive.py
+
+      - name: Upload listings.json to Drive (FR)
+        if: always() && matrix.country == 'fr'
+        env:
+          FILE_ID: ${{ secrets.AMAZON_FR_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_fr_listings.json
+        run: |
+          test -f "$LOCAL_FILE"
+          python upload_to_drive.py
+
+      - name: Upload listings.json to Drive (DE)
+        if: always() && matrix.country == 'de'
+        env:
+          FILE_ID: ${{ secrets.AMAZON_DE_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_de_listings.json
+        run: |
+          test -f "$LOCAL_FILE"
+          python upload_to_drive.py
+
+      - name: Upload listings.json to Drive (ES)
+        if: always() && matrix.country == 'es'
+        env:
+          FILE_ID: ${{ secrets.AMAZON_ES_LISTINGS_JSON_FILE_ID }}
+          LOCAL_FILE: amazon_es_listings.json
         run: |
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
