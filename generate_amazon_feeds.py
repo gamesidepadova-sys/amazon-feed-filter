@@ -16,6 +16,12 @@ INPUT_FILTERED = "filtered.csv"
 
 FAIL_IF_NO_MATCH = (os.environ.get("FAIL_IF_NO_MATCH", "0").strip() == "1")
 
+MARKETPLACE_IDS = {
+    "it": "APJ6JRA9NG5V4",
+    "fr": "A13V1IB3VIYZZH",
+    "de": "A1PA6795UKMFR9",
+    "es": "A1RKKUPIHCS9HS",
+}
 
 # ----------------------------
 # Helpers base
@@ -24,17 +30,14 @@ def money(x: Decimal, decimals: int = 2) -> Decimal:
     q = Decimal("1." + "0" * decimals)
     return x.quantize(q, rounding=ROUND_HALF_UP)
 
-
 def norm_yes(x: Any) -> bool:
     return str(x or "").strip().upper() == "YES"
-
 
 def to_int(x: Any, default: int = 0) -> int:
     try:
         return int(str(x).strip())
     except Exception:
         return default
-
 
 def to_dec_robust(x: Any, default: Decimal = Decimal("0")) -> Decimal:
     if x is None:
@@ -43,23 +46,18 @@ def to_dec_robust(x: Any, default: Decimal = Decimal("0")) -> Decimal:
     for ch in ["\ufeff", "\u00a0"]:
         s = s.replace(ch, "")
     s = s.replace(",", ".")
-    s_clean = ""
-    for c in s:
-        if c.isdigit() or c == ".":
-            s_clean += c
+    s_clean = "".join(c for c in s if c.isdigit() or c == ".")
     try:
         return Decimal(s_clean)
     except InvalidOperation:
         print(f"WARNING: valore '{x}' non convertibile a Decimal, uso default {default}")
         return default
 
-
 def clean_str(x: Any) -> str:
     s = str(x or "")
     s = s.replace("\ufeff", "")
     s = s.replace("\u00a0", " ")
     return s.strip()
-
 
 # ----------------------------
 # Google Sheets helpers
@@ -70,7 +68,6 @@ def read_sheet(service, spreadsheet_id: str, sheet_name: str) -> List[List[str]]
         range=sheet_name
     ).execute()
     return resp.get("values", [])
-
 
 def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
     out: Dict[str, str] = {}
@@ -83,17 +80,14 @@ def kv_settings(rows: List[List[str]]) -> Dict[str, str]:
             out[k] = v
     return out
 
-
 def build_index(header: List[str]) -> Dict[str, int]:
     return {clean_str(h).lower(): i for i, h in enumerate(header)}
-
 
 def get_cell(row: List[str], idx: Dict[str, int], key: str, default: str = "") -> str:
     i = idx.get(key.lower(), -1)
     if i < 0 or i >= len(row):
         return default
     return clean_str(row[i])
-
 
 def get_setting(settings: Dict[str, str], key: str, country: str, default: str) -> str:
     key_country = f"{key}_{country}".lower()
@@ -105,7 +99,6 @@ def get_setting(settings: Dict[str, str], key: str, country: str, default: str) 
             return v
     return default
 
-
 def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired: str) -> str:
     meta = sheets_service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
     tabs = [s.get("properties", {}).get("title", "") for s in (meta.get("sheets") or [])]
@@ -116,9 +109,8 @@ def find_sheet_tab_case_insensitive(sheets_service, spreadsheet_id: str, desired
     print(f"WARNING: tab '{desired}' not found exactly. Available tabs: {tabs}")
     return desired
 
-
 # ----------------------------
-# Load suppliers from Google Sheet
+# Load suppliers
 # ----------------------------
 def load_supplier_sheet(service, spreadsheet_id: str, sheet_name: str):
     rows = read_sheet(service, spreadsheet_id, sheet_name)
@@ -149,44 +141,6 @@ def load_supplier_sheet(service, spreadsheet_id: str, sheet_name: str):
 
     return out_handling, out_ship
 
-
-# ----------------------------
-# CSV helpers
-# ----------------------------
-def detect_delim_from_first_line(first_line: str) -> str:
-    if "\t" in first_line:
-        return "\t"
-    if "|" in first_line:
-        return "|"
-    if ";" in first_line:
-        return ";"
-    return ","
-
-
-def normalize_fieldnames(fieldnames: List[str]) -> Dict[str, str]:
-    m: Dict[str, str] = {}
-    for f in fieldnames or []:
-        norm = clean_str(f).lower().replace(" ", "_")
-        m[norm] = f
-    return m
-
-
-def pick_field(field_map: Dict[str, str], candidates: List[str]) -> Optional[str]:
-    for c in candidates:
-        c0 = c.lower().replace(" ", "_")
-        if c0 in field_map:
-            return field_map[c0]
-    for k, real in field_map.items():
-        for c in candidates:
-            if c.lower().replace(" ", "_") in k:
-                return real
-    return None
-
-
-def norm_sku(s: str) -> str:
-    return clean_str(s)
-
-
 # ----------------------------
 # MAIN
 # ----------------------------
@@ -202,6 +156,8 @@ def main():
     country = clean_str(os.environ.get("COUNTRY") or "it").lower()
     if country not in {"it", "de", "fr", "es"}:
         raise RuntimeError("COUNTRY must be one of: it,de,fr,es")
+
+    marketplace_id = MARKETPLACE_IDS[country]
 
     out_b2c = f"amazon_{country}_b2c.csv"
     out_b2b = f"amazon_{country}_b2b.csv"
@@ -233,12 +189,10 @@ def main():
     qty2_mul = Decimal("1") - qty2_disc_pct / Decimal("100")
     qty4_mul = Decimal("1") - qty4_disc_pct / Decimal("100")
 
-    # ---- LOAD SUPPLIERS ----
     supplier_handling, supplier_ship_cost = load_supplier_sheet(
         sheets, spreadsheet_id, suppliers_tab
     )
 
-    # ---- SELEZIONE ----
     sel_rows = read_sheet(sheets, spreadsheet_id, sel_tab)
     if not sel_rows:
         raise RuntimeError(f'Sheet "{sel_tab}" empty or missing')
@@ -263,7 +217,7 @@ def main():
 
     pub_b2c, pub_b2b = set(), set()
     for r in sel_rows[1:]:
-        sku = norm_sku(get_cell(r, idx, "sku"))
+        sku = clean_str(get_cell(r, idx, "sku"))
         if not sku:
             continue
         if get_publish(r, ["publish_b2c", "publish b2c", "b2c_publish", "publishb2c"]):
@@ -273,8 +227,7 @@ def main():
 
     selected = pub_b2c | pub_b2b
 
-    # ---- filtered.csv (robusto) ----
-
+    # ---- filtered.csv ----
     def autodetect_delimiter(sample_line: str) -> str:
         for d in ["\t", ";", ",", "|"]:
             if d in sample_line:
@@ -302,7 +255,7 @@ def main():
             print(f"[ERRORE] Costo non valido ({cost}) per SKU {sku}")
             return False
         if cost > Decimal("200"):
-            print(f"[ATTENZIONE] Costo sospetto ({cost}) per SKU {sku} — possibile errore di colonna")
+            print(f"[ATTENZIONE] Costo sospetto ({cost}) per SKU {sku}")
         return True
 
     with open(INPUT_FILTERED, "r", encoding="utf-8-sig", newline="") as fin:
@@ -314,44 +267,35 @@ def main():
         if not reader.fieldnames:
             raise RuntimeError("filtered.csv has no header")
 
-        field_map = normalize_fieldnames(reader.fieldnames)
+        field_map = {clean_str(f).lower().replace(" ", "_"): f for f in reader.fieldnames}
 
-        sku_field = pick_field(field_map, ["sku", "seller_sku", "item_sku", "merchant_sku", "sku_id"])
-        qty_field = pick_field(field_map, ["quantita", "qty", "quantity", "stock"])
-        base_field = pick_field(field_map, ["prezzo_iva_esclusa", "cost", "net_price", "base_price", "price"])
+        def pick_field(candidates):
+            for c in candidates:
+                c0 = c.lower().replace(" ", "_")
+                if c0 in field_map:
+                    return field_map[c0]
+            for k, real in field_map.items():
+                for c in candidates:
+                    if c.lower().replace(" ", "_") in k:
+                        return real
+            return None
+
+        sku_field = pick_field(["sku", "seller_sku", "item_sku", "merchant_sku", "sku_id"])
+        qty_field = pick_field(["quantita", "qty", "quantity", "stock"])
+        base_field = pick_field(["prezzo_iva_esclusa", "cost", "net_price", "base_price", "price"])
 
         if not sku_field:
             raise RuntimeError(f"SKU column not found in filtered.csv header: {reader.fieldnames}")
 
-        skipped_missing_sku = 0
-        skipped_not_selected = 0
-        skipped_missing_fields = 0
-        skipped_bad_base_qty = 0
-
-        rows_b2c = 0
-        rows_b2b = 0
-        rows_priceinv = 0
-
-        listings_messages: List[dict] = []
+        rows_b2c = rows_b2b = rows_priceinv = 0
+        listings_messages = []
         msg_id = 1
-
         found_selected = set()
 
         with open(out_b2c, "w", encoding="utf-8", newline="") as f1, \
              open(out_b2b, "w", encoding="utf-8", newline="") as f2, \
-             open(out_priceinv, "w", encoding="utf-8", newline="") as f3, \
-             open(f"amazon_{country}_business_pricing.txt", "w", encoding="utf-8", newline="") as f4:
+             open(out_priceinv, "w", encoding="utf-8", newline="") as f3:
 
-            # writer “grezzi” (non più usati dopo DictWriter, ma innocui)
-            w1 = csv.writer(f1, delimiter="\t", lineterminator="\n")
-            w2 = csv.writer(f2, delimiter="\t", lineterminator="\n")
-            w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
-            w4 = csv.writer(f4, delimiter="\t", lineterminator="\n")
-
-            # intestazione business pricing
-            w4.writerow(["sku", "business-price", "quantity-price-type", "quantity-lower-bound", "quantity-price"])
-
-            # writer reali
             w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
             w2 = csv.DictWriter(f2, [
                 "sku", "price_b2c_eur", "price_b2b_eur",
@@ -372,20 +316,13 @@ def main():
             ])
 
             for row in reader:
-                sku = norm_sku(row.get(sku_field))
+                sku = clean_str(row.get(sku_field))
                 if not sku:
-                    skipped_missing_sku += 1
                     continue
-
                 if sku not in selected:
-                    skipped_not_selected += 1
                     continue
 
                 found_selected.add(sku)
-
-                if not qty_field or not base_field:
-                    skipped_missing_fields += 1
-                    continue
 
                 raw_base = row.get(base_field)
                 raw_qty = row.get(qty_field)
@@ -394,7 +331,6 @@ def main():
                 qty = to_int(raw_qty)
 
                 if not validate_cost(base, sku) or qty < 0:
-                    skipped_bad_base_qty += 1
                     continue
 
                 sup = sku.split("_")[1] if "_" in sku else ""
@@ -402,14 +338,6 @@ def main():
                 handling = supplier_handling.get(sup, 2)
 
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
-
-                if sku == "T_0372_8039171032":
-                    print("DEBUG SKU:", sku)
-                    print("  base =", base)
-                    print("  ship =", ship)
-                    print("  b2c_mul =", b2c_mul)
-                    print("  vat_mul =", vat_mul)
-                    print("  b2c =", b2c)
 
                 if sku in pub_b2c:
                     w1.writerow({
@@ -425,7 +353,6 @@ def main():
                     q2 = money(b2c * qty2_mul, round_decimals)
                     q4 = money(b2c * qty4_mul, round_decimals)
 
-                    # Scrittura nel file B2B (CSV)
                     w2.writerow({
                         "sku": sku,
                         "price_b2c_eur": f"{b2c:.2f}",
@@ -437,12 +364,28 @@ def main():
                     })
                     rows_b2b += 1
 
-                    # Scrittura nel Business Pricing TXT
-                    w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 2, f"{q2:.2f}"])
-                    w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 4, f"{q4:.2f}"])
-
                 w3.writerow([sku, f"{b2c:.2f}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
+
+                # ---- JSON_LISTINGS_FEED ----
+                purchasable_offer = {
+                    "marketplace_id": marketplace_id,
+                    "our_price": [
+                        {
+                            "currency": "EUR",
+                            "value": float(b2c)
+                        }
+                    ]
+                }
+
+                if sku in pub_b2b:
+                    b2b = money(b2c * b2b_mul, round_decimals)
+                    purchasable_offer["business_price"] = [
+                        {
+                            "currency": "EUR",
+                            "value": float(b2b)
+                        }
+                    ]
 
                 listings_messages.append({
                     "messageId": msg_id,
@@ -453,23 +396,21 @@ def main():
                         {
                             "op": "replace",
                             "path": "/attributes/fulfillment_availability",
-                            "value": [{"fulfillment_channel_code": "DEFAULT", "quantity": qty}]
+                            "value": [
+                                {
+                                    "fulfillment_channel_code": "DEFAULT",
+                                    "quantity": qty
+                                }
+                            ]
                         },
                         {
                             "op": "replace",
                             "path": "/attributes/purchasable_offer",
-                            "value": [{
-                                "currency": "EUR",
-                                "our_price": [{"schedule": [{"value_with_tax": f"{b2c:.2f}"}]}]
-                            }]
+                            "value": [purchasable_offer]
                         }
                     ]
                 })
                 msg_id += 1
-
-    missing = sorted(list(selected - found_selected))
-    if FAIL_IF_NO_MATCH and len(found_selected) == 0 and len(selected) > 0:
-        raise RuntimeError("No selected SKUs were found in filtered.csv")
 
     listings_obj = {
         "header": {
