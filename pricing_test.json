@@ -1,0 +1,52 @@
+{
+  "header": {
+    "sellerId": "AE69GC53PJGW9",
+    "version": "2.0",
+    "issueLocale": "it_IT"
+  },
+  "messages": [
+    {
+      "messageId": 1,
+      "sku": "T_0372_15150238000",
+      "operationType": "PATCH",
+      "productType": "PRODUCT",
+      "patches": [
+        {
+          "op": "replace",
+          "path": "/attributes/purchasable_offer",
+          "value": [
+            {
+              "marketplace_id": "APJ6JRA9NG5V4",
+              "our_price": [
+                {
+                  "currency": "EUR",
+                  "value": 395.02,
+                  "schedule": [
+                    {
+                      "start_at": "2020-01-01T00:00:00Z",
+                      "value": 395.02,
+                      "value_with_tax": 395.02
+                    }
+                  ]
+                }
+              ],
+              "business_price": [
+                {
+                  "currency": "EUR",
+                  "value": 367.37,
+                  "schedule": [
+                    {
+                      "start_at": "2020-01-01T00:00:00Z",
+                      "value": 367.37,
+                      "value_with_tax": 367.37
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
