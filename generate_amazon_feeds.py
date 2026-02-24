@@ -393,12 +393,12 @@ def main():
                 b2c = money((base * b2c_mul + ship) * vat_mul, round_decimals)
 
                 if sku == "T_0372_8039171032":
-                print("DEBUG SKU:", sku)
-                print("  base =", base)
-                print("  ship =", ship)
-                print("  b2c_mul =", b2c_mul)
-                print("  vat_mul =", vat_mul)
-                print("  b2c =", b2c)
+                    print("DEBUG SKU:", sku)
+                    print("  base =", base)
+                    print("  ship =", ship)
+                    print("  b2c_mul =", b2c_mul)
+                    print("  vat_mul =", vat_mul)
+                    print("  b2c =", b2c)
 
                 if sku in pub_b2c:
                     w1.writerow({
