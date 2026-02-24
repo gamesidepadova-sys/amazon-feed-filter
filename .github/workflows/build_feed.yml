@@ -11,6 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ###########################################################################
+  # COMMON JOB — genera filtered.csv e lo carica come artifact
+  ###########################################################################
   build_common:
     runs-on: ubuntu-latest
     steps:
@@ -18,20 +21,17 @@ jobs:
 
       - name: Install Python deps (Google + SP-API)
         run: |
-          set -e
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
           pip install requests botocore
 
       - name: Download source CSV
         run: |
-          set -e
           curl -L --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 3600 \
             "${{ secrets.SOURCE_CSV_URL }}" -o source.csv
 
       - name: Filter CSV
         run: |
-          set -e
           python filter_feed.py
           ls -lh filtered.csv
           head -n 2 filtered.csv | cat
@@ -41,14 +41,12 @@ jobs:
         with:
           name: filtered-csv
           path: filtered.csv
-          if-no-files-found: error
           retention-days: 1
 
       - name: Write service account JSON to file
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
         run: |
-          set -e
           echo "$GDRIVE_SA_JSON" > sa.json
 
       - name: Upload filtered.csv to Google Sheet "Filtered"
@@ -57,35 +55,44 @@ jobs:
           INPUT_CSV: filtered.csv
           FILTERED_SHEET_NAME: Filtered
         run: |
-          set -e
           python upload_csv_to_sheet.py
 
-      - name: Upload artifact (common pipeline files)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: common-files
-          path: |
-            filtered.csv
-            new_skus_0930.csv
-          if-no-files-found: warn
-          retention-days: 3
-
   ###########################################################################
-  it:
+  # MATRIX JOB — IT, FR, DE, ES
+  ###########################################################################
+  amazon_feeds:
     needs: build_common
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        country: [it, fr, de, es]
+        include:
+          - country: it
+            marketplace: APJ6JRA9NG5V4
+            locale: it_IT
+          - country: fr
+            marketplace: A13V1IB3VIYZZH
+            locale: fr_FR
+          - country: de
+            marketplace: A1PA6795UKMFR9
+            locale: de_DE
+          - country: es
+            marketplace: A1RKKUPIHCS9HS
+            locale: es_ES
+
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - name: Download filtered.csv artifact
+        uses: actions/download-artifact@v4
         with:
           name: filtered-csv
           path: .
 
       - name: Install Python deps (Google + SP-API)
         run: |
-          set -e
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-httplib2
           pip install requests botocore
@@ -94,51 +101,52 @@ jobs:
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
         run: |
-          printf '%s' "$GDRIVE_SA_JSON" > sa.json
+          echo "$GDRIVE_SA_JSON" > sa.json
 
       #######################################################################
-      # GENERAZIONE FEED AMAZON IT
+      # GENERAZIONE FEED AMAZON (JSON_LISTINGS_FEED)
       #######################################################################
-      - name: Generate Amazon feeds IT
+      - name: Generate Amazon feeds
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: it
+          COUNTRY: ${{ matrix.country }}
           AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
         run: |
           python generate_amazon_feeds.py
-          ls -lh amazon_it_*
+          ls -lh amazon_${{ matrix.country }}_*
 
       #######################################################################
-      # CACHE DOPO LA GENERAZIONE (corretto)
+      # CACHE HASH DOPO GENERAZIONE
       #######################################################################
-      - name: Restore listings hash cache (IT)
+      - name: Restore listings hash cache
         uses: actions/cache@v4
         with:
           path: .cache
-          key: listings-hash-it-${{ github.ref_name }}
-          restore-keys: listings-hash-it-
+          key: listings-hash-${{ matrix.country }}-${{ github.ref_name }}
+          restore-keys: listings-hash-${{ matrix.country }}-
 
       #######################################################################
       # CHECK SE IL JSON È CAMBIATO
       #######################################################################
-      - name: Check if listings JSON changed (IT)
+      - name: Check if listings JSON changed
         id: check_json
         run: |
           mkdir -p .cache
-          test -f amazon_it_listings.json
-          NEW_HASH=$(md5sum amazon_it_listings.json | awk '{print $1}')
-          OLD_HASH=$(cat .cache/amazon_it_listings.md5 2>/dev/null || true)
+          FILE=amazon_${{ matrix.country }}_listings.json
+          test -f "$FILE"
+          NEW_HASH=$(md5sum "$FILE" | awk '{print $1}')
+          OLD_HASH=$(cat .cache/${FILE}.md5 2>/dev/null || true)
           if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
-            echo "$NEW_HASH" > .cache/amazon_it_listings.md5
+            echo "$NEW_HASH" > .cache/${FILE}.md5
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
       #######################################################################
       # INVIO JSON_LISTINGS_FEED
       #######################################################################
-      - name: Send JSON_LISTINGS_FEED IT
+      - name: Send JSON_LISTINGS_FEED
         if: steps.check_json.outputs.changed == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
@@ -148,15 +156,16 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
+          FILE=amazon_${{ matrix.country }}_listings.json
           FEED_OUTPUT=$(python publish_spapi_feed.py \
-            --file amazon_it_listings.json \
+            --file "$FILE" \
             --feed-type JSON_LISTINGS_FEED \
-            --marketplace APJ6JRA9NG5V4)
+            --marketplace ${{ matrix.marketplace }})
           echo "$FEED_OUTPUT"
           FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
           echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
 
-      - name: Check feed status IT
+      - name: Check feed status
         if: steps.check_json.outputs.changed == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
@@ -168,597 +177,31 @@ jobs:
         run: |
           sleep 20
           python check_spapi_feed.py --feed-id $FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      #######################################################################
-      # BUSINESS PRICING — CONTROLLO FILE
-      #######################################################################
-      - name: Check Business Pricing file IT
-        id: check_bp
-        run: |
-          if [ -s amazon_it_business_pricing.txt ] && [ $(wc -l < amazon_it_business_pricing.txt) -gt 1 ]; then
-            echo "has_bp_data=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_bp_data=false" >> $GITHUB_OUTPUT
-          fi
-
-      #######################################################################
-      # BUSINESS PRICING — INVIO FEED
-      #######################################################################
-      - name: Send BUSINESS_PRICING_FEED IT
-        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          BP_OUT=$(python publish_spapi_feed.py \
-            --file amazon_it_business_pricing.txt \
-            --feed-type POST_PRODUCT_PRICING_DATA \
-            --marketplace APJ6JRA9NG5V4)
-          echo "$BP_OUT"
-          BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
-
-      - name: Check BUSINESS_PRICING_FEED status IT
-        if: steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $BP_FEED_ID
           head -n 120 feed_processing_report.txt || true
 
       #######################################################################
       # ARTIFACTS + BACKUP
       #######################################################################
-      - name: Upload artifacts IT
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: it-files
+          name: ${{ matrix.country }}-files
           path: |
-            amazon_it_listings.json
-            amazon_it_b2c.csv
-            amazon_it_b2b.csv
-            amazon_it_business_pricing.txt
+            amazon_${{ matrix.country }}_listings.json
+            amazon_${{ matrix.country }}_b2c.csv
+            amazon_${{ matrix.country }}_b2b.csv
+            amazon_${{ matrix.country }}_price_quantity.txt
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
           retention-days: 7
 
-      - name: Upload amazon_it_listings.json to Drive (backup)
+      - name: Upload listings.json to Drive (backup)
         if: always()
         env:
-          FILE_ID: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_it_listings.json
+          FILE_ID: ${{ secrets['AMAZON_' + matrix.country | upper + '_LISTINGS_JSON_FILE_ID'] }}
+          LOCAL_FILE: amazon_${{ matrix.country }}_listings.json
         run: |
-          set -e
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
-      - name: Upload SP-API debug dump
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: spapi-debug-it
-          path: spapi_request_response.txt
-          if-no-files-found: warn
-
-   ###########################################################################
-  # 🇫🇷 FRANCE
-  ###########################################################################
-  fr:
-    needs: build_common
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download filtered.csv artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: filtered-csv
-          path: .
-
-      - name: Verify filtered.csv
-        run: |
-          set -e
-          ls -lh filtered.csv
-          head -n 2 filtered.csv | cat
-
-      - name: Install Python deps (Google + SP-API)
-        run: |
-          set -e
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth google-auth-httplib2
-          pip install requests botocore
-
-      - name: Write service account JSON to file
-        env:
-          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
-        run: |
-          echo "$GDRIVE_SA_JSON" > sa.json
-
-      - name: Generate Amazon feeds FR
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: fr
-          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
-        run: |
-          python generate_amazon_feeds.py
-          ls -lh amazon_fr_*
-
-      - name: Restore listings hash cache (FR)
-        uses: actions/cache@v4
-        with:
-          path: .cache
-          key: listings-hash-fr-${{ github.ref_name }}
-          restore-keys: listings-hash-fr-
-
-      - name: Check if listings JSON changed (FR)
-        id: check_json
-        run: |
-          mkdir -p .cache
-          test -f amazon_fr_listings.json
-          NEW_HASH=$(md5sum amazon_fr_listings.json | awk '{print $1}')
-          OLD_HASH=$(cat .cache/amazon_fr_listings.md5 2>/dev/null || true)
-          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "$NEW_HASH" > .cache/amazon_fr_listings.md5
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send JSON_LISTINGS_FEED FR
-        if: steps.check_json.outputs.changed == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          FEED_OUTPUT=$(python publish_spapi_feed.py \
-            --file amazon_fr_listings.json \
-            --feed-type JSON_LISTINGS_FEED \
-            --marketplace A13V1IB3VIYZZH)
-          echo "$FEED_OUTPUT"
-          FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
-
-      - name: Check feed status FR
-        if: steps.check_json.outputs.changed == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      #######################################################################
-      # BUSINESS PRICING — CONTROLLO FILE
-      #######################################################################
-      - name: Check Business Pricing file FR
-        id: check_bp
-        run: |
-          if [ -s amazon_fr_business_pricing.txt ] && [ $(wc -l < amazon_fr_business_pricing.txt) -gt 1 ]; then
-            echo "has_bp_data=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_bp_data=false" >> $GITHUB_OUTPUT
-          fi
-
-      #######################################################################
-      # BUSINESS PRICING — INVIO FEED
-      #######################################################################
-      - name: Send BUSINESS_PRICING_FEED FR
-        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          BP_OUT=$(python publish_spapi_feed.py \
-            --file amazon_fr_business_pricing.txt \
-            --feed-type POST_PRODUCT_PRICING_DATA \
-            --marketplace A13V1IB3VIYZZH)
-          echo "$BP_OUT"
-          BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
-
-      #######################################################################
-      # BUSINESS PRICING — POLLING
-      #######################################################################
-      - name: Check BUSINESS_PRICING_FEED status FR
-        if: steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $BP_FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      - name: Upload artifacts FR
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fr-files
-          path: |
-            amazon_fr_listings.json
-            amazon_fr_b2c.csv
-            amazon_fr_b2b.csv
-            amazon_fr_business_pricing.txt
-            feed_status.json
-            feed_processing_report.txt
-            feed_document_meta.json
-          retention-days: 7
-
-      - name: Upload amazon_fr_listings.json to Drive (backup)
-        if: always()
-        env:
-          FILE_ID: ${{ secrets.AMAZON_FR_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_fr_listings.json
-        run: |
-          set -e
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
-  ###########################################################################
-  # 🇩🇪 GERMANY
-  ###########################################################################
-  de:
-    needs: build_common
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download filtered.csv artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: filtered-csv
-          path: .
-
-      - name: Verify filtered.csv
-        run: |
-          set -e
-          ls -lh filtered.csv
-          head -n 2 filtered.csv | cat
-
-      - name: Install Python deps (Google + SP-API)
-        run: |
-          set -e
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth google-auth-httplib2
-          pip install requests botocore
-
-      - name: Write service account JSON to file
-        env:
-          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
-        run: |
-          echo "$GDRIVE_SA_JSON" > sa.json
-
-      - name: Generate Amazon feeds DE
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: de
-          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
-        run: |
-          python generate_amazon_feeds.py
-          ls -lh amazon_de_*
-
-      - name: Restore listings hash cache (DE)
-        uses: actions/cache@v4
-        with:
-          path: .cache
-          key: listings-hash-de-${{ github.ref_name }}
-          restore-keys: listings-hash-de-
-
-      - name: Check if listings JSON changed (DE)
-        id: check_json
-        run: |
-          mkdir -p .cache
-          test -f amazon_de_listings.json
-          NEW_HASH=$(md5sum amazon_de_listings.json | awk '{print $1}')
-          OLD_HASH=$(cat .cache/amazon_de_listings.md5 2>/dev/null || true)
-          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "$NEW_HASH" > .cache/amazon_de_listings.md5
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send JSON_LISTINGS_FEED DE
-        if: steps.check_json.outputs.changed == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          FEED_OUTPUT=$(python publish_spapi_feed.py \
-            --file amazon_de_listings.json \
-            --feed-type JSON_LISTINGS_FEED \
-            --marketplace A1PA6795UKMFR9)
-          echo "$FEED_OUTPUT"
-          FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
-
-      - name: Check feed status DE
-        if: steps.check_json.outputs.changed == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      #######################################################################
-      # BUSINESS PRICING — CONTROLLO FILE
-      #######################################################################
-      - name: Check Business Pricing file DE
-        id: check_bp
-        run: |
-          if [ -s amazon_de_business_pricing.txt ] && [ $(wc -l < amazon_de_business_pricing.txt) -gt 1 ]; then
-            echo "has_bp_data=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_bp_data=false" >> $GITHUB_OUTPUT
-          fi
-
-      #######################################################################
-      # BUSINESS PRICING — INVIO FEED
-      #######################################################################
-      - name: Send BUSINESS_PRICING_FEED DE
-        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          BP_OUT=$(python publish_spapi_feed.py \
-            --file amazon_de_business_pricing.txt \
-            --feed-type POST_PRODUCT_PRICING_DATA \
-            --marketplace A1PA6795UKMFR9)
-          echo "$BP_OUT"
-          BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
-
-      #######################################################################
-      # BUSINESS PRICING — POLLING
-      #######################################################################
-      - name: Check BUSINESS_PRICING_FEED status DE
-        if: steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $BP_FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      - name: Upload artifacts DE
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: de-files
-          path: |
-            amazon_de_listings.json
-            amazon_de_b2c.csv
-            amazon_de_b2b.csv
-            amazon_de_business_pricing.txt
-            feed_status.json
-            feed_processing_report.txt
-            feed_document_meta.json
-          retention-days: 7
-
-      - name: Upload amazon_de_listings.json to Drive (backup)
-        if: always()
-        env:
-          FILE_ID: ${{ secrets.AMAZON_DE_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_de_listings.json
-        run: |
-          set -e
-          test -f "$LOCAL_FILE"
-          python upload_to_drive.py
-    ###########################################################################
-  # 🇪🇸 SPAIN
-  ###########################################################################
-  es:
-    needs: build_common
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download filtered.csv artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: filtered-csv
-          path: .
-
-      - name: Verify filtered.csv
-        run: |
-          set -e
-          ls -lh filtered.csv
-          head -n 2 filtered.csv | cat
-
-      - name: Install Python deps (Google + SP-API)
-        run: |
-          set -e
-          python -m pip install --upgrade pip
-          pip install google-api-python-client google-auth google-auth-httplib2
-          pip install requests botocore
-
-      - name: Write service account JSON to file
-        env:
-          GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
-        run: |
-          echo "$GDRIVE_SA_JSON" > sa.json
-
-      - name: Generate Amazon feeds ES
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          COUNTRY: es
-          AMAZON_SELLER_ID: ${{ secrets.AMAZON_SELLER_ID }}
-        run: |
-          python generate_amazon_feeds.py
-          ls -lh amazon_es_*
-
-      - name: Restore listings hash cache (ES)
-        uses: actions/cache@v4
-        with:
-          path: .cache
-          key: listings-hash-es-${{ github.ref_name }}
-          restore-keys: listings-hash-es-
-
-      - name: Check if listings JSON changed (ES)
-        id: check_json
-        run: |
-          mkdir -p .cache
-          test -f amazon_es_listings.json
-          NEW_HASH=$(md5sum amazon_es_listings.json | awk '{print $1}')
-          OLD_HASH=$(cat .cache/amazon_es_listings.md5 2>/dev/null || true)
-          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "$NEW_HASH" > .cache/amazon_es_listings.md5
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Send JSON_LISTINGS_FEED ES
-        if: steps.check_json.outputs.changed == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          FEED_OUTPUT=$(python publish_spapi_feed.py \
-            --file amazon_es_listings.json \
-            --feed-type JSON_LISTINGS_FEED \
-            --marketplace A1RKKUPIHCS9HS)
-          echo "$FEED_OUTPUT"
-          FEED_ID=$(echo "$FEED_OUTPUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "FEED_ID=$FEED_ID" >> $GITHUB_ENV
-
-      - name: Check feed status ES
-        if: steps.check_json.outputs.changed == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      #######################################################################
-      # BUSINESS PRICING — CONTROLLO FILE
-      #######################################################################
-      - name: Check Business Pricing file ES
-        id: check_bp
-        run: |
-          if [ -s amazon_es_business_pricing.txt ] && [ $(wc -l < amazon_es_business_pricing.txt) -gt 1 ]; then
-            echo "has_bp_data=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_bp_data=false" >> $GITHUB_OUTPUT
-          fi
-
-      #######################################################################
-      # BUSINESS PRICING — INVIO FEED
-      #######################################################################
-      - name: Send BUSINESS_PRICING_FEED ES
-        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          BP_OUT=$(python publish_spapi_feed.py \
-            --file amazon_es_business_pricing.txt \
-            --feed-type POST_PRODUCT_PRICING_DATA \
-            --marketplace A1RKKUPIHCS9HS)
-          echo "$BP_OUT"
-          BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
-          echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
-
-      #######################################################################
-      # BUSINESS PRICING — POLLING
-      #######################################################################
-      - name: Check BUSINESS_PRICING_FEED status ES
-        if: steps.check_bp.outputs.has_bp_data == 'true'
-        env:
-          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
-          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
-          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-        run: |
-          sleep 20
-          python check_spapi_feed.py --feed-id $BP_FEED_ID
-          head -n 120 feed_processing_report.txt || true
-
-      - name: Upload artifacts ES
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: es-files
-          path: |
-            amazon_es_listings.json
-            amazon_es_b2c.csv
-            amazon_es_b2b.csv
-            amazon_es_business_pricing.txt
-            feed_status.json
-            feed_processing_report.txt
-            feed_document_meta.json
-          retention-days: 7
-
-      - name: Upload amazon_es_listings.json to Drive (backup)
-        if: always()
-        env:
-          FILE_ID: ${{ secrets.AMAZON_ES_LISTINGS_JSON_FILE_ID }}
-          LOCAL_FILE: amazon_es_listings.json
-        run: |
-          set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
