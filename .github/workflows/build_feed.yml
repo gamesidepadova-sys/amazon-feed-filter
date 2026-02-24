@@ -60,9 +60,6 @@ jobs:
           set -e
           python upload_csv_to_sheet.py
 
-      # --- baseline/new skus (lascia come già funzionante da te) ---
-      # ... (tutto quello che hai già per baseline + new_skus_0930 + upload) ...
-
       - name: Upload artifact (common pipeline files)
         if: always()
         uses: actions/upload-artifact@v4
@@ -180,6 +177,7 @@ jobs:
             amazon_it_listings.json
             amazon_it_b2c.csv
             amazon_it_b2b.csv
+            amazon_it_business_pricing.txt
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
@@ -195,7 +193,6 @@ jobs:
           set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
-
   fr:
     needs: build_common
     runs-on: ubuntu-latest
@@ -303,6 +300,7 @@ jobs:
             amazon_fr_listings.json
             amazon_fr_b2c.csv
             amazon_fr_b2b.csv
+            amazon_fr_business_pricing.txt
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
@@ -425,6 +423,7 @@ jobs:
             amazon_de_listings.json
             amazon_de_b2c.csv
             amazon_de_b2b.csv
+            amazon_de_business_pricing.txt
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
@@ -440,7 +439,6 @@ jobs:
           set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
-
   es:
     needs: build_common
     runs-on: ubuntu-latest
@@ -548,6 +546,7 @@ jobs:
             amazon_es_listings.json
             amazon_es_b2c.csv
             amazon_es_b2b.csv
+            amazon_es_business_pricing.txt
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
