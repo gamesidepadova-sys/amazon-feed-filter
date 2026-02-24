@@ -342,6 +342,7 @@ def main():
              open(out_priceinv, "w", encoding="utf-8", newline="") as f3, \
              open(f"amazon_{country}_business_pricing.txt", "w", encoding="utf-8", newline="") as f4:
 
+            # writer “grezzi” (non più usati dopo DictWriter, ma innocui)
             w1 = csv.writer(f1, delimiter="\t", lineterminator="\n")
             w2 = csv.writer(f2, delimiter="\t", lineterminator="\n")
             w3 = csv.writer(f3, delimiter="\t", lineterminator="\n")
@@ -350,6 +351,7 @@ def main():
             # intestazione business pricing
             w4.writerow(["sku", "business-price", "quantity-price-type", "quantity-lower-bound", "quantity-price"])
 
+            # writer reali
             w1 = csv.DictWriter(f1, ["sku", "price_b2c_eur", "qty_available", "country"])
             w2 = csv.DictWriter(f2, [
                 "sku", "price_b2c_eur", "price_b2b_eur",
@@ -422,8 +424,8 @@ def main():
                     b2b = money(b2c * b2b_mul, round_decimals)
                     q2 = money(b2c * qty2_mul, round_decimals)
                     q4 = money(b2c * qty4_mul, round_decimals)
-                
-                    # Scrittura nel file B2B (già esistente)
+
+                    # Scrittura nel file B2B (CSV)
                     w2.writerow({
                         "sku": sku,
                         "price_b2c_eur": f"{b2c:.2f}",
@@ -434,21 +436,10 @@ def main():
                         "country": country
                     })
                     rows_b2b += 1
-                
-                    # 🔥 Scrittura nel Business Pricing TXT (nuovo)
+
+                    # Scrittura nel Business Pricing TXT
                     w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 2, f"{q2:.2f}"])
                     w4.writerow([sku, f"{b2b:.2f}", "QuantityDiscount", 4, f"{q4:.2f}"])
-
-
-                        "sku": sku,
-                        "price_b2c_eur": f"{b2c:.2f}",
-                        "price_b2b_eur": f"{b2b:.2f}",
-                        "qty2_price_eur": f"{q2:.2f}",
-                        "qty4_price_eur": f"{q4:.2f}",
-                        "qty_available": qty,
-                        "country": country
-                    })
-                    rows_b2b += 1
 
                 w3.writerow([sku, f"{b2c:.2f}", "", "", str(qty), "DEFAULT", str(handling)])
                 rows_priceinv += 1
@@ -462,7 +453,7 @@ def main():
                         {
                             "op": "replace",
                             "path": "/attributes/fulfillment_availability",
-                            "value": [{"fulfillment_channel_code": "DEFAULT","quantity": qty}]
+                            "value": [{"fulfillment_channel_code": "DEFAULT", "quantity": qty}]
                         },
                         {
                             "op": "replace",
