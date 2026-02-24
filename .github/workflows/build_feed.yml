@@ -167,11 +167,23 @@ jobs:
           python check_spapi_feed.py --feed-id $FEED_ID
           head -n 120 feed_processing_report.txt || true
 
+      #######################################################################
+      # BUSINESS PRICING — CONTROLLO FILE
+      #######################################################################
+      - name: Check Business Pricing file IT
+        id: check_bp
+        run: |
+          if [ -s amazon_it_business_pricing.txt ] && [ $(wc -l < amazon_it_business_pricing.txt) -gt 1 ]; then
+            echo "has_bp_data=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_bp_data=false" >> $GITHUB_OUTPUT
+          fi
+
+      #######################################################################
+      # BUSINESS PRICING — INVIO FEED
+      #######################################################################
       - name: Send BUSINESS_PRICING_FEED IT
-        if: |
-          steps.check_json.outputs.changed == 'true' &&
-          [ -s amazon_it_business_pricing.txt ] &&
-          [ $(wc -l < amazon_it_business_pricing.txt) -gt 1 ]
+        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -188,8 +200,11 @@ jobs:
           BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
           echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
 
+      #######################################################################
+      # BUSINESS PRICING — POLLING
+      #######################################################################
       - name: Check BUSINESS_PRICING_FEED status IT
-        if: env.BP_FEED_ID != ''
+        if: steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -226,7 +241,8 @@ jobs:
           set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
-  ###########################################################################
+
+   ###########################################################################
   # 🇫🇷 FRANCE
   ###########################################################################
   fr:
@@ -322,11 +338,23 @@ jobs:
           python check_spapi_feed.py --feed-id $FEED_ID
           head -n 120 feed_processing_report.txt || true
 
+      #######################################################################
+      # BUSINESS PRICING — CONTROLLO FILE
+      #######################################################################
+      - name: Check Business Pricing file FR
+        id: check_bp
+        run: |
+          if [ -s amazon_fr_business_pricing.txt ] && [ $(wc -l < amazon_fr_business_pricing.txt) -gt 1 ]; then
+            echo "has_bp_data=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_bp_data=false" >> $GITHUB_OUTPUT
+          fi
+
+      #######################################################################
+      # BUSINESS PRICING — INVIO FEED
+      #######################################################################
       - name: Send BUSINESS_PRICING_FEED FR
-        if: |
-          steps.check_json.outputs.changed == 'true' &&
-          [ -s amazon_fr_business_pricing.txt ] &&
-          [ $(wc -l < amazon_fr_business_pricing.txt) -gt 1 ]
+        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -343,8 +371,11 @@ jobs:
           BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
           echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
 
+      #######################################################################
+      # BUSINESS PRICING — POLLING
+      #######################################################################
       - name: Check BUSINESS_PRICING_FEED status FR
-        if: env.BP_FEED_ID != ''
+        if: steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -477,11 +508,23 @@ jobs:
           python check_spapi_feed.py --feed-id $FEED_ID
           head -n 120 feed_processing_report.txt || true
 
+      #######################################################################
+      # BUSINESS PRICING — CONTROLLO FILE
+      #######################################################################
+      - name: Check Business Pricing file DE
+        id: check_bp
+        run: |
+          if [ -s amazon_de_business_pricing.txt ] && [ $(wc -l < amazon_de_business_pricing.txt) -gt 1 ]; then
+            echo "has_bp_data=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_bp_data=false" >> $GITHUB_OUTPUT
+          fi
+
+      #######################################################################
+      # BUSINESS PRICING — INVIO FEED
+      #######################################################################
       - name: Send BUSINESS_PRICING_FEED DE
-        if: |
-          steps.check_json.outputs.changed == 'true' &&
-          [ -s amazon_de_business_pricing.txt ] &&
-          [ $(wc -l < amazon_de_business_pricing.txt) -gt 1 ]
+        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -498,8 +541,11 @@ jobs:
           BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
           echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
 
+      #######################################################################
+      # BUSINESS PRICING — POLLING
+      #######################################################################
       - name: Check BUSINESS_PRICING_FEED status DE
-        if: env.BP_FEED_ID != ''
+        if: steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -536,7 +582,7 @@ jobs:
           set -e
           test -f "$LOCAL_FILE"
           python upload_to_drive.py
-  ###########################################################################
+    ###########################################################################
   # 🇪🇸 SPAIN
   ###########################################################################
   es:
@@ -632,11 +678,23 @@ jobs:
           python check_spapi_feed.py --feed-id $FEED_ID
           head -n 120 feed_processing_report.txt || true
 
+      #######################################################################
+      # BUSINESS PRICING — CONTROLLO FILE
+      #######################################################################
+      - name: Check Business Pricing file ES
+        id: check_bp
+        run: |
+          if [ -s amazon_es_business_pricing.txt ] && [ $(wc -l < amazon_es_business_pricing.txt) -gt 1 ]; then
+            echo "has_bp_data=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_bp_data=false" >> $GITHUB_OUTPUT
+          fi
+
+      #######################################################################
+      # BUSINESS PRICING — INVIO FEED
+      #######################################################################
       - name: Send BUSINESS_PRICING_FEED ES
-        if: |
-          steps.check_json.outputs.changed == 'true' &&
-          [ -s amazon_es_business_pricing.txt ] &&
-          [ $(wc -l < amazon_es_business_pricing.txt) -gt 1 ]
+        if: steps.check_json.outputs.changed == 'true' && steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
@@ -653,8 +711,11 @@ jobs:
           BP_FEED_ID=$(echo "$BP_OUT" | grep -o '"feedId": *"[0-9]*"' | grep -o '[0-9]*')
           echo "BP_FEED_ID=$BP_FEED_ID" >> $GITHUB_ENV
 
+      #######################################################################
+      # BUSINESS PRICING — POLLING
+      #######################################################################
       - name: Check BUSINESS_PRICING_FEED status ES
-        if: env.BP_FEED_ID != ''
+        if: steps.check_bp.outputs.has_bp_data == 'true'
         env:
           SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
           SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
