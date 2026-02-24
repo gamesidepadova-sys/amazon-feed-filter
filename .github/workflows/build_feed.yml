@@ -72,15 +72,22 @@ jobs:
           - country: it
             marketplace: APJ6JRA9NG5V4
             locale: it_IT
+            listings_file_id: ${{ secrets.AMAZON_IT_LISTINGS_JSON_FILE_ID }}
+
           - country: fr
             marketplace: A13V1IB3VIYZZH
             locale: fr_FR
+            listings_file_id: ${{ secrets.AMAZON_FR_LISTINGS_JSON_FILE_ID }}
+
           - country: de
             marketplace: A1PA6795UKMFR9
             locale: de_DE
+            listings_file_id: ${{ secrets.AMAZON_DE_LISTINGS_JSON_FILE_ID }}
+
           - country: es
             marketplace: A1RKKUPIHCS9HS
             locale: es_ES
+            listings_file_id: ${{ secrets.AMAZON_ES_LISTINGS_JSON_FILE_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -200,7 +207,7 @@ jobs:
       - name: Upload listings.json to Drive (backup)
         if: always()
         env:
-          FILE_ID: ${{ secrets['AMAZON_' + matrix.country | upper + '_LISTINGS_JSON_FILE_ID'] }}
+          FILE_ID: ${{ matrix.listings_file_id }}
           LOCAL_FILE: amazon_${{ matrix.country }}_listings.json
         run: |
           test -f "$LOCAL_FILE"
