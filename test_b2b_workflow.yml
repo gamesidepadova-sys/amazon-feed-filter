@@ -1,0 +1,60 @@
+jobs:
+  test_b2b:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests boto3 botocore
+
+      - name: Create B2B test JSON feed
+        run: |
+          cat << 'EOF' > amazon_it_listings_confirm.json
+          {
+            "header": {
+              "sellerId": "AE69GC53PJGW9",
+              "version": "2.0",
+              "issueLocale": "it_IT"
+            },
+            "messages": [
+              {
+                "messageId": 1,
+                "sku": "T_0372_15150238000",
+                "operationType": "PATCH",
+                "productType": "PRODUCT",
+                "patches": [
+                  {
+                    "op": "replace",
+                    "path": "/attributes/purchasable_offer",
+                    "value": [
+                      {
+                        "marketplace_id": "APJ6JRA9NG5V4",
+                        "our_price": [
+                          { "currency": "EUR", "value": 395.02 }
+                        ],
+                        "business_price": [
+                          { "currency": "EUR", "value": 367.37 }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+          EOF
+
+      - name: Publish SP-API feed
+        run: |
+          python publish_spapi_feed.py \
+            --file amazon_it_listings_confirm.json \
+            --feed-type JSON_LISTINGS_FEED \
+            --marketplace APJ6JRA9NG5V4
