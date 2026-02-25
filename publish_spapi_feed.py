@@ -172,7 +172,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True)
     ap.add_argument("--feed-type", required=True)
-    ap.add.add_argument("--marketplace", action="append", required=True)
+    ap.add_argument("--marketplace", action="append", required=True)
     ap.add_argument("--content-type", default="application/json; charset=UTF-8")
     ap.add_argument("--skip-sellers-check", action="store_true")
     args = ap.parse_args()
