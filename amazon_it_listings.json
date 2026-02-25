@@ -20,27 +20,13 @@
               "our_price": [
                 {
                   "currency": "EUR",
-                  "value": 395.02,
-                  "schedule": [
-                    {
-                      "start_at": "2020-01-01T00:00:00Z",
-                      "value": 395.02,
-                      "value_with_tax": 395.02
-                    }
-                  ]
+                  "value": 395.02
                 }
               ],
               "business_price": [
                 {
                   "currency": "EUR",
-                  "value": 367.37,
-                  "schedule": [
-                    {
-                      "start_at": "2020-01-01T00:00:00Z",
-                      "value": 367.37,
-                      "value_with_tax": 367.37
-                    }
-                  ]
+                  "value": 367.37
                 }
               ]
             }
