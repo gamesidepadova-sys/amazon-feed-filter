@@ -301,3 +301,13 @@ jobs:
             feed_status.json
             feed_processing_report.txt
             feed_document_meta.json
+
+      - name: Set B2B price via Pricing API (test)
+        run: python set_b2b_price.py
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SPAPI_LWA_CLIENT_ID: ${{ secrets.SPAPI_LWA_CLIENT_ID }}
+          SPAPI_LWA_CLIENT_SECRET: ${{ secrets.SPAPI_LWA_CLIENT_SECRET }}
+          SPAPI_LWA_REFRESH_TOKEN: ${{ secrets.SPAPI_LWA_REFRESH_TOKEN }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
