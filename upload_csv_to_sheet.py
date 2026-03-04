@@ -1,35 +1,44 @@
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
+/**
+ * uploadCSVToDrive.gs
+ *
+ * Scopo:
+ * - Carica/aggiorna il CSV su Google Drive
+ * - Pulisce caratteri invisibili, doppi apici e HTML
+ */
 
-# ----------------------
-# Configurazione
-# ----------------------
-SERVICE_ACCOUNT_FILE = "service_account.json"  # secret scritto dal workflow
-CSV_FILE = "filtered_clean.csv"
-DRIVE_FILE_ID = "1mJ3sHcF5w7eXxV3kLc9sI4XN7afjfgGB"  # ID del file Drive da aggiornare
+const CFG = {
+  INPUT_FILE_NAME: "filtered_clean.csv",   // il file generato da filter_feed.py
+  OUTPUT_FILE_NAME: "filtered_clean.csv"   // stesso nome sul Drive
+};
 
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+function uploadCSVToDrive() {
+  // Recupera il file CSV locale sul container (se usi GitHub Actions con clasp, assicurati che sia copiato)
+  const folder = DriveApp.getRootFolder(); // puoi cambiare se vuoi una cartella specifica
+  const files = folder.getFilesByName(CFG.OUTPUT_FILE_NAME);
 
-def main():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
-    )
+  // Leggi contenuto
+  let content = "";
+  if (files.hasNext()) {
+    content = files.next().getBlob().getDataAsString("UTF-8");
+  } else {
+    Logger.log("File locale non trovato: " + CFG.INPUT_FILE_NAME);
+    return;
+  }
 
-    service = build("drive", "v3", credentials=creds)
+  // --- Pulizie ---
+  content = content.replace(/[\x00-\x1F]/g, "");
+  content = content.replace(/""/g, "'");
+  content = content.replace(/<[^>]+>/g, "");
+  content = content.replace(/\r\n/g, "\n");
 
-    # Leggi CSV
-    with open(CSV_FILE, "rb") as f:
-        content = f.read()
-
-    # Aggiorna file su Drive
-    file_metadata = {}
-    media = {"body": content, "mimeType": "text/csv"}
-    updated = service.files().update(
-        fileId=DRIVE_FILE_ID,
-        media_body=CSV_FILE
-    ).execute()
-
-    print(f"File Drive aggiornato: {DRIVE_FILE_ID}")
-
-if __name__ == "__main__":
-    main()
+  // Controlla se esiste già su Drive
+  const driveFiles = DriveApp.getFilesByName(CFG.OUTPUT_FILE_NAME);
+  if (driveFiles.hasNext()) {
+    const outFile = driveFiles.next();
+    outFile.setContent(content);
+    Logger.log("Aggiornato su Drive: " + CFG.OUTPUT_FILE_NAME);
+  } else {
+    DriveApp.createFile(CFG.OUTPUT_FILE_NAME, content, MimeType.PLAIN_TEXT);
+    Logger.log("Creato nuovo file su Drive: " + CFG.OUTPUT_FILE_NAME);
+  }
+}
