@@ -1,11 +1,14 @@
 import csv
-from pathlib import Path
+import requests
+import re
 
-INPUT_FILE = "source.csv"
-OUTPUT_FILE = "filtered.csv"
+# ----------------------
+# Configurazione
+# ----------------------
+INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
+OUTPUT_FILE = "filtered_clean.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
-
 ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
@@ -13,18 +16,19 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
+MIN_QTY = 10
 
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
-
-
+# ----------------------
+# Funzioni di supporto
+# ----------------------
 def detect_delim(text: str) -> str:
-    sample = text[:8192]
     try:
+        sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
     except Exception:
         first = text.splitlines()[0] if text else ""
-        # fallback semplice
         if "\t" in first:
             return "\t"
         if "|" in first:
@@ -32,7 +36,6 @@ def detect_delim(text: str) -> str:
         if ";" in first and first.count(";") > first.count(","):
             return ";"
         return ","
-
 
 def to_int(x, default=0) -> int:
     try:
@@ -43,40 +46,48 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
-
 def supplier_from_sku(sku: str) -> str:
-    # SKU tipico: T_0372_17077617000
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
         return parts[1]
-    # fallback: cerca un blocco 4 cifre tra gli underscore
     for p in parts:
         if len(p) == 4 and p.isdigit():
             return p
     return ""
 
-
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
+def clean_text(s: str) -> str:
+    """Rimuove caratteri invisibili, HTML e doppi apici"""
+    s = str(s or "")
+    s = re.sub(r"[\x00-\x1F]", "", s)          # caratteri invisibili
+    s = s.replace('""', "'")                    # doppi apici
+    s = re.sub(r"<[^>]+>", "", s)               # tag HTML
+    s = s.replace("\r\n", "\n")                 # newline uniformi
+    return s
 
+# ----------------------
+# Script principale
+# ----------------------
 def main():
-    raw = Path(INPUT_FILE).read_bytes()
-    text = raw.decode("utf-8-sig", errors="replace")
+    # Scarica CSV dall’URL
+    resp = requests.get(INPUT_URL)
+    resp.raise_for_status()
+    text = resp.content.decode("utf-8-sig", errors="replace")
     delim = detect_delim(text)
-
-    rows_in = 0
-    rows_out = 0
 
     reader = csv.DictReader(text.splitlines(), delimiter=delim)
     if not reader.fieldnames:
-        raise RuntimeError(f"{INPUT_FILE} has no header")
+        raise RuntimeError("Il CSV scaricato non ha header")
 
-    # Verifica colonne minime (con i tuoi header reali)
     required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
     missing = [c for c in required if c not in set(reader.fieldnames)]
     if missing:
-        raise RuntimeError(f"Missing required columns in {INPUT_FILE}: {missing}. Header={reader.fieldnames}")
+        raise RuntimeError(f"Colonne mancanti: {missing}. Header={reader.fieldnames}")
+
+    rows_in = 0
+    rows_out = 0
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
@@ -95,34 +106,30 @@ def main():
             if not sku:
                 continue
 
-            # Supplier whitelist (da SKU)
             supplier = supplier_from_sku(sku)
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
 
-            # Categoria whitelist su cat1
             cat1 = norm(row.get("cat1"))
             if cat1 not in ALLOWED_CAT1:
                 continue
 
-            # Quantità >= 10
-            qty = to_int(row.get("quantita"), 0)
-            if qty < 10:
+            qty = to_int(row.get("quantita"))
+            if qty < MIN_QTY:
                 continue
 
-            # Esclusioni sul titolo
             title = norm(row.get("titolo_prodotto"))
-            if any(bad in title for bad in EXCLUDE_TITLE_SUBSTRINGS):
+            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            writer.writerow(row)
+            # Pulizia dei campi
+            cleaned_row = {k: clean_text(v) for k, v in row.items()}
+
+            writer.writerow(cleaned_row)
             rows_out += 1
 
-    print("Detected delimiter:", repr(delim))
-    print(f"Rows in: {rows_in}")
-    print(f"Rows out: {rows_out}")
-    print(f"Wrote: {OUTPUT_FILE}")
-
+    print("Filtered CSV pronto e pulito!")
+    print(f"Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
