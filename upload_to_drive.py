@@ -6,7 +6,7 @@ import os
 SERVICE_ACCOUNT_FILE = "service_account.json"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-FILE_NAME = "filtered_clean.csv"      # file generato dal filtro
+FILE_NAME = "filtered.csv"      # file generato dal filtro
 DRIVE_FILE_NAME = "filtered.csv"      # nome su Google Drive
 DRIVE_FOLDER_ID = None                # opzionale: ID cartella
 
