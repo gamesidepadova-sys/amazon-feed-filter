@@ -1,8 +1,8 @@
-name: Build Filtered CSV Feed
+name: Build & Upload Filtered CSV Feed
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 * * * *'  # ogni ora
   workflow_dispatch:
 
 jobs:
@@ -20,27 +20,11 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+        pip install requests google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
     - name: Create service account file
       run: |
         printf "%s" '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service_account.json
 
-    - name: Debug file content
-      run: |
-        sed -n '1,20p' service_account.json
-
-    - name: Validate JSON
-      run: |
-        python3 - << 'EOF'
-        import json
-        try:
-            json.load(open("service_account.json"))
-            print("JSON OK")
-        except Exception as e:
-            print("JSON ERROR:", e)
-            raise
-        EOF
-
-    - name: Run upload script
-      run: python upload_to_drive.py
+    - name: Run filtering and upload script
+      run: python process_and_upload.py
