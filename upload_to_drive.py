@@ -3,48 +3,45 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import os
 
-# -----------------------------
-# Configurazione
-# -----------------------------
-SERVICE_ACCOUNT_FILE = "service_account.json"  # già creato dal workflow
+SERVICE_ACCOUNT_FILE = "service_account.json"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-# ID del file su Drive da aggiornare
-# Se vuoi creare un nuovo file, metti None
-DRIVE_FILE_ID = "1mJ3sHcF5w7eXxV3kLc9sI4XN7afjfgGB"
+FILE_NAME = "filtered_clean.csv"      # file generato dal filtro
+DRIVE_FILE_NAME = "filtered.csv"      # nome su Google Drive
+DRIVE_FOLDER_ID = None                # opzionale: ID cartella
 
-# CSV locale da caricare
-LOCAL_CSV = "filtered.csv"
+def main():
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
 
-# -----------------------------
-# Autenticazione
-# -----------------------------
-creds = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
-)
-service = build("drive", "v3", credentials=creds)
+    service = build("drive", "v3", credentials=creds)
 
-# -----------------------------
-# Upload
-# -----------------------------
-if not os.path.exists(LOCAL_CSV):
-    raise FileNotFoundError(f"{LOCAL_CSV} non trovato!")
+    media = MediaFileUpload(FILE_NAME, mimetype="text/csv", resumable=False)
 
-media = MediaFileUpload(LOCAL_CSV, mimetype="text/csv", resumable=True)
+    # Cerca file esistente
+    query = f"name='{DRIVE_FILE_NAME}' and trashed=false"
+    results = service.files().list(q=query, fields="files(id, name)").execute()
+    files = results.get("files", [])
 
-if DRIVE_FILE_ID:
-    # Aggiorna file esistente
-    file = service.files().update(
-        fileId=DRIVE_FILE_ID,
-        media_body=media
-    ).execute()
-    print(f"Aggiornato file Drive: {file.get('name')} (ID={file.get('id')})")
-else:
-    # Crea nuovo file
-    file_metadata = {"name": os.path.basename(LOCAL_CSV)}
-    file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id,name"
-    ).execute()
-    print(f"Creato nuovo file Drive: {file.get('name')} (ID={file.get('id')})")
+    if files:
+        file_id = files[0]["id"]
+        service.files().update(
+            fileId=file_id,
+            media_body=media
+        ).execute()
+        print("File aggiornato su Drive:", DRIVE_FILE_NAME)
+    else:
+        metadata = {"name": DRIVE_FILE_NAME}
+        if DRIVE_FOLDER_ID:
+            metadata["parents"] = [DRIVE_FOLDER_ID]
+
+        service.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id"
+        ).execute()
+        print("File creato su Drive:", DRIVE_FILE_NAME)
+
+if __name__ == "__main__":
+    main()
