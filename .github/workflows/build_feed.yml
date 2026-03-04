@@ -1,4 +1,4 @@
-name: Build & Upload Filtered CSV Feed
+name: Build Filtered CSV Feed
 
 on:
   schedule:
@@ -20,11 +20,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install requests google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+        pip install requests
 
-    - name: Create service account file
-      run: |
-        printf "%s" '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service_account.json
-
-    - name: Run filtering and upload script
+    - name: Run CSV filter script
       run: python process_and_upload.py
