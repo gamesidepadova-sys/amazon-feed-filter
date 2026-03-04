@@ -1,40 +1,35 @@
-/**
- * uploadCSVToDrive.gs
- *
- * Scopo: carica/aggiorna un file CSV su Drive
- */
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
-// Configurazione
-const CFG = {
-  INPUT_FILE_ID: "1mJ3sHcF5w7eXxV3kLc9sI4XN7afjfgGB",   // Il file da aggiornare
-  OUTPUT_FILE_NAME: "filtered_clean.csv"      // Nome del file pulito
-};
+# ----------------------
+# Configurazione
+# ----------------------
+SERVICE_ACCOUNT_FILE = "service_account.json"  # secret scritto dal workflow
+CSV_FILE = "filtered_clean.csv"
+DRIVE_FILE_ID = "1mJ3sHcF5w7eXxV3kLc9sI4XN7afjfgGB"  # ID del file Drive da aggiornare
 
-function uploadCSVToDrive() {
-  // Trova il file di input tramite fileId
-  const inputFile = DriveApp.getFileById(CFG.INPUT_FILE_ID);
-  if (!inputFile) {
-    Logger.log("File di input non trovato: " + CFG.INPUT_FILE_ID);
-    return;
-  }
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-  // Leggi contenuto
-  let content = inputFile.getBlob().getDataAsString("UTF-8");
+def main():
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
 
-  // --- Pulizie opzionali se vuoi ---
-  content = content.replace(/[\x00-\x1F]/g, "");
-  content = content.replace(/""/g, "'");
-  content = content.replace(/<[^>]+>/g, "");
-  content = content.replace(/\r\n/g, "\n");
+    service = build("drive", "v3", credentials=creds)
 
-  // Cerca se esiste già il file di output
-  const files = DriveApp.getFilesByName(CFG.OUTPUT_FILE_NAME);
-  if (files.hasNext()) {
-    const outFile = files.next();
-    outFile.setContent(content);
-    Logger.log("Aggiornato: " + CFG.OUTPUT_FILE_NAME);
-  } else {
-    DriveApp.createFile(CFG.OUTPUT_FILE_NAME, content, MimeType.PLAIN_TEXT);
-    Logger.log("Creato nuovo file: " + CFG.OUTPUT_FILE_NAME);
-  }
-}
+    # Leggi CSV
+    with open(CSV_FILE, "rb") as f:
+        content = f.read()
+
+    # Aggiorna file su Drive
+    file_metadata = {}
+    media = {"body": content, "mimeType": "text/csv"}
+    updated = service.files().update(
+        fileId=DRIVE_FILE_ID,
+        media_body=CSV_FILE
+    ).execute()
+
+    print(f"File Drive aggiornato: {DRIVE_FILE_ID}")
+
+if __name__ == "__main__":
+    main()
