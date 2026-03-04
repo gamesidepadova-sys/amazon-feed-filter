@@ -31,18 +31,47 @@ jobs:
         run: |
           python filter_feed.py
           ls -lh filtered.csv
-          head -n 2 filtered.csv | cat
 
+      ########################################################
+      # CACHE HASH
+      ########################################################
+      - name: Restore CSV hash cache
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: csv-hash-${{ github.ref_name }}
+          restore-keys: csv-hash-
+
+      - name: Check if CSV changed
+        id: check_csv
+        run: |
+          mkdir -p .cache
+          FILE=filtered.csv
+          NEW_HASH=$(md5sum "$FILE" | awk '{print $1}')
+          OLD_HASH=$(cat .cache/${FILE}.md5 2>/dev/null || true)
+
+          if [ "$NEW_HASH" = "$OLD_HASH" ] && [ -n "$NEW_HASH" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "CSV non cambiato"
+          else
+            echo "$NEW_HASH" > .cache/${FILE}.md5
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "CSV cambiato"
+          fi
+
+      ########################################################
+      # UPLOAD SOLO SE CAMBIATO
+      ########################################################
       - name: Write Google service account JSON
+        if: steps.check_csv.outputs.changed == 'true'
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
-        run: |
-          echo "$GDRIVE_SA_JSON" > sa.json
+        run: echo "$GDRIVE_SA_JSON" > sa.json
 
       - name: Upload filtered.csv to Google Sheet "Filtered"
+        if: steps.check_csv.outputs.changed == 'true'
         env:
           FILTERED_SHEET_ID: ${{ secrets.FILTERED_SHEET_ID }}
           INPUT_CSV: filtered.csv
           FILTERED_SHEET_NAME: Filtered
-        run: |
-          python upload_csv_to_sheet.py
+        run: python upload_csv_to_sheet.py
