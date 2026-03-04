@@ -20,7 +20,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt
+        pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
     - name: Create service account file
       run: |
