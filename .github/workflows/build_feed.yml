@@ -24,7 +24,11 @@ jobs:
 
     - name: Create service account file
       run: |
-        echo '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service_account.json
+        printf "%s" '${{ secrets.GDRIVE_SERVICE_ACCOUNT }}' > service_account.json
+
+    - name: Debug file content
+      run: |
+        sed -n '1,20p' service_account.json
 
     - name: Validate JSON
       run: |
@@ -37,9 +41,6 @@ jobs:
             print("JSON ERROR:", e)
             raise
         EOF
-
-    - name: List files (debug)
-      run: ls -la
 
     - name: Run upload script
       run: python upload_to_drive.py
