@@ -1,12 +1,19 @@
 import csv
 import requests
-import re
+import pandas as pd
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2 import service_account
 
 # ----------------------
-# Configurazione
+# CONFIG
 # ----------------------
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "filtered_clean.csv"
+
+SERVICE_ACCOUNT_FILE = "path/to/service_account.json"
+DRIVE_FOLDER_ID = "ID_CARTELLA_DRIVE"
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
 ALLOWED_CAT1 = {
@@ -16,66 +23,67 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 
 # ----------------------
-# Funzioni di supporto
+# UPLOAD
 # ----------------------
-def detect_delim(text: str) -> str:
-    try:
-        sample = text[:8192]
-        d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        return d.delimiter
-    except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first: return "\t"
-        if "|" in first: return "|"
-        if ";" in first and first.count(";") > first.count(","): return ";"
-        return ","
+def upload_to_drive(file_path, filename):
+    credentials = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
+    service = build('drive', 'v3', credentials=credentials)
 
-def to_int(x, default=0) -> int:
-    try:
-        s = str(x or "").strip()
-        if not s: return default
-        return int(float(s.replace(",", ".")))
-    except Exception:
-        return default
+    metadata = {'name': filename, 'parents': [DRIVE_FOLDER_ID]}
+    media = MediaFileUpload(file_path, mimetype='text/csv')
 
-def supplier_from_sku(sku: str) -> str:
-    parts = (sku or "").split("_")
-    if len(parts) >= 2 and parts[1].isdigit():
-        return parts[1]
-    for p in parts:
-        if len(p) == 4 and p.isdigit(): return p
-    return ""
+    file = service.files().create(
+        body=metadata, media_body=media, fields='id'
+    ).execute()
 
-def norm(s: str) -> str:
-    return str(s or "").strip().lower()
-
-def clean_text(s: str) -> str:
-    s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
-    s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", "\n")
-    return s
+    print("Caricato su Drive:", file.get("id"))
 
 # ----------------------
-# Script principale
+# MAIN
 # ----------------------
 def main():
+    # Scarica CSV originale
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
-    delim = detect_delim(text)
 
-    reader = csv.DictReader(text.splitlines(), delimiter=delim)
-    if not reader.fieldnames:
-        raise RuntimeError("Il CSV scaricato non ha header")
+    # Rileva delimitatore
+    sample = text[:8192]
+    try:
+        delim = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except:
+        delim = "|"
 
-    # Colonne da esportare (quelle corrette)
-    FIELDNAMES = [
+    # Leggi CSV in DataFrame
+    df = pd.read_csv(
+        pd.compat.StringIO(text),
+        sep=delim,
+        dtype=str,
+        keep_default_na=False
+    )
+
+    # Filtri
+    df["quantita"] = pd.to_numeric(df["quantita"], errors="coerce").fillna(0).astype(int)
+    df = df[df["quantita"] >= MIN_QTY]
+
+    df["cat1_norm"] = df["cat1"].str.lower().str.strip()
+    df = df[df["cat1_norm"].isin(ALLOWED_CAT1)]
+
+    df["supplier"] = df["sku"].str.extract(r"_(\d{4})")
+    df = df[df["supplier"].isin(ALLOWED_SUPPLIERS)]
+
+    df["title_norm"] = df["titolo_prodotto"].str.lower()
+    for bad in EXCLUDE_TITLE_SUBSTRINGS:
+        df = df[~df["title_norm"].str.contains(bad)]
+
+    # Colonne finali (10 esatte)
+    cols = [
         "cat1",
         "sku",
         "ean",
@@ -85,50 +93,18 @@ def main():
         "titolo_prodotto",
         "immagine_principale",
         "descrizione_prodotto",
-        "costo_spedizione"
+        "costo_spedizione",
     ]
 
-    rows_in = 0
-    rows_out = 0
+    df = df[cols]
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.DictWriter(
-            fout,
-            fieldnames=FIELDNAMES,
-            delimiter=delim,
-            lineterminator="\n",
-            quoting=csv.QUOTE_MINIMAL,
-        )
-        writer.writeheader()
+    # Salva con pipe, senza colonna extra
+    df.to_csv(OUTPUT_FILE, index=False, sep="|", quoting=csv.QUOTE_MINIMAL)
 
-        for row in reader:
-            rows_in += 1
+    print("Creato:", OUTPUT_FILE, "righe:", len(df))
 
-            sku = (row.get("sku") or "").strip()
-            if not sku:
-                continue
+    upload_to_drive(OUTPUT_FILE, OUTPUT_FILE)
 
-            supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS:
-                continue
-
-            cat1 = norm(row.get("cat1"))
-            if cat1 not in ALLOWED_CAT1:
-                continue
-
-            qty = to_int(row.get("quantita"))
-            if qty < MIN_QTY:
-                continue
-
-            title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
-                continue
-
-            cleaned_row = {k: clean_text(row.get(k, "")) for k in FIELDNAMES}
-            writer.writerow(cleaned_row)
-            rows_out += 1
-
-    print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
-
+# ----------------------
 if __name__ == "__main__":
     main()
