@@ -1,11 +1,15 @@
 import csv
 from pathlib import Path
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# Input/Output
+# =========================
+# CONFIGURAZIONE
+# =========================
 INPUT_FILE = "source.csv"
 OUTPUT_FILE = "filtered.csv"
 
-# Filtri
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
 ALLOWED_CAT1 = {
     "informatica",
@@ -17,11 +21,14 @@ ALLOWED_CAT1 = {
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
 MIN_QTY = 10
 
-# -------------------------
-# Funzioni di supporto
-# -------------------------
+# Drive
+SERVICE_ACCOUNT_FILE = "service_account.json"  # Path al tuo service account
+DRIVE_FOLDER_ID = "ID_cartella_drive"          # Cartella su Drive dove mettere filtered.csv
+
+# =========================
+# FUNZIONI DI SUPPORTO
+# =========================
 def detect_delim(text: str) -> str:
-    """Auto-detect CSV delimiter: tab -> pipe -> semicolon -> comma."""
     try:
         sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
@@ -37,7 +44,6 @@ def detect_delim(text: str) -> str:
         return ","
 
 def to_int(x, default=0) -> int:
-    """Convert string/float to int safely."""
     try:
         s = str(x or "").strip()
         if not s:
@@ -47,7 +53,6 @@ def to_int(x, default=0) -> int:
         return default
 
 def supplier_from_sku(sku: str) -> str:
-    """Estrae il codice fornitore dal formato SKU tipico: T_0372_17077617000"""
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
         return parts[1]
@@ -59,11 +64,10 @@ def supplier_from_sku(sku: str) -> str:
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
-# -------------------------
-# Script principale
-# -------------------------
-def main():
-    # Leggi file sorgente
+# =========================
+# FILTRAGGIO CSV
+# =========================
+def filter_csv():
     raw = Path(INPUT_FILE).read_bytes()
     text = raw.decode("utf-8-sig", errors="replace")
     delim = detect_delim(text)
@@ -72,7 +76,6 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError(f"{INPUT_FILE} has no header row")
 
-    # Controllo colonne minime
     required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
     missing = [c for c in required if c not in set(reader.fieldnames)]
     if missing:
@@ -93,12 +96,11 @@ def main():
 
         for row in reader:
             rows_in += 1
-
             sku = (row.get("sku") or "").strip()
             if not sku:
                 continue
 
-            # Supplier whitelist
+            # Supplier
             supplier = supplier_from_sku(sku)
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
@@ -109,13 +111,13 @@ def main():
                 continue
 
             # Quantità
-            qty = to_int(row.get("quantita"), 0)
+            qty = to_int(row.get("quantita"))
             if qty < MIN_QTY:
                 continue
 
-            # Esclusione titoli
+            # Esclusioni titolo
             title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
+            if any(sub in title for sub in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
             writer.writerow(row)
@@ -125,8 +127,44 @@ def main():
     print("Detected delimiter:", repr(delim))
     print(f"Rows read: {rows_in}")
     print(f"Rows written: {rows_out}")
-    print(f"Output file: {OUTPUT_FILE}")
+    return OUTPUT_FILE
 
+# =========================
+# UPLOAD SU DRIVE
+# =========================
+def upload_to_drive(file_path):
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE,
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    service = build("drive", "v3", credentials=creds)
 
+    # Controlla se il file esiste già
+    res = service.files().list(
+        q=f"'{DRIVE_FOLDER_ID}' in parents and name='{Path(file_path).name}' and trashed=false",
+        fields="files(id, name)"
+    ).execute()
+
+    media = MediaFileUpload(file_path, mimetype="text/csv", resumable=True)
+
+    if res.get("files"):
+        file_id = res["files"][0]["id"]
+        updated = service.files().update(
+            fileId=file_id,
+            media_body=media
+        ).execute()
+        print(f"File aggiornato su Drive: {updated['name']} (ID {updated['id']})")
+    else:
+        new_file = service.files().create(
+            body={"name": Path(file_path).name, "parents": [DRIVE_FOLDER_ID]},
+            media_body=media,
+            fields="id, name"
+        ).execute()
+        print(f"File creato su Drive: {new_file['name']} (ID {new_file['id']})")
+
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
-    main()
+    filtered_file = filter_csv()
+    upload_to_drive(filtered_file)
