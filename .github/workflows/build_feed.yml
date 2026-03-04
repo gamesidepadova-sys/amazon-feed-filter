@@ -24,20 +24,24 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      # 4️⃣ Scrivere credenziali service account se servono (solo per Python che usa API Google)
-      #    In realtà ora non serve più perché l’upload è gestito da Apps Script
-      # - name: Write Service Account JSON
-      #   run: |
-      #     echo "${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}" > service_account.json
+      # 4️⃣ Scrivere credenziali Service Account dal secret
+      - name: Write Service Account JSON
+        run: |
+          echo "${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}" > service_account.json
 
-      # 5️⃣ Generazione filtered_clean.csv
+      # 5️⃣ Generazione filtered.csv
       - name: Generate filtered CSV
         run: |
           python filter_feed.py
 
-      # 6️⃣ Conferma
+      # 6️⃣ Upload su Google Drive
+      - name: Upload filtered.csv to Drive
+        run: |
+          python upload_to_drive.py
+
+      # 7️⃣ Optional log
       - name: Confirm
         run: |
-          echo "filtered_clean.csv generato localmente. Caricamento su Drive gestito da Apps Script."
+          echo "filtered.csv aggiornato su Drive. Apps Script può generare filtered_clean.csv automaticamente."
