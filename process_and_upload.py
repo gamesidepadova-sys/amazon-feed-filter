@@ -54,7 +54,6 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML e doppi apici"""
     s = str(s or "")
     s = re.sub(r"[\x00-\x1F]", "", s)
     s = s.replace('""', "'")
@@ -66,7 +65,6 @@ def clean_text(s: str) -> str:
 # Script principale
 # ----------------------
 def main():
-    # Scarica CSV dall’URL
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
@@ -76,10 +74,19 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
-    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
-    missing = [c for c in required if c not in set(reader.fieldnames)]
-    if missing:
-        raise RuntimeError(f"Colonne mancanti: {missing}. Header={reader.fieldnames}")
+    # Colonne da esportare (quelle corrette)
+    FIELDNAMES = [
+        "cat1",
+        "sku",
+        "ean",
+        "mpn",
+        "quantita",
+        "prezzo_iva_esclusa",
+        "titolo_prodotto",
+        "immagine_principale",
+        "descrizione_prodotto",
+        "costo_spedizione"
+    ]
 
     rows_in = 0
     rows_out = 0
@@ -87,7 +94,7 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
             fout,
-            fieldnames=reader.fieldnames,
+            fieldnames=FIELDNAMES,
             delimiter=delim,
             lineterminator="\n",
             quoting=csv.QUOTE_MINIMAL,
@@ -96,23 +103,28 @@ def main():
 
         for row in reader:
             rows_in += 1
+
             sku = (row.get("sku") or "").strip()
-            if not sku: continue
+            if not sku:
+                continue
 
             supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS: continue
+            if supplier not in ALLOWED_SUPPLIERS:
+                continue
 
             cat1 = norm(row.get("cat1"))
-            if cat1 not in ALLOWED_CAT1: continue
+            if cat1 not in ALLOWED_CAT1:
+                continue
 
             qty = to_int(row.get("quantita"))
-            if qty < MIN_QTY: continue
+            if qty < MIN_QTY:
+                continue
 
             title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
+            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
+                continue
 
-            # Pulizia dei campi
-            cleaned_row = {k: clean_text(v) for k, v in row.items()}
+            cleaned_row = {k: clean_text(row.get(k, "")) for k in FIELDNAMES}
             writer.writerow(cleaned_row)
             rows_out += 1
 
