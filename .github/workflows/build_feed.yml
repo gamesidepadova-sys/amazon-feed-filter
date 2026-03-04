@@ -2,7 +2,7 @@ name: Build Filtered CSV Feed
 
 on:
   schedule:
-    - cron: '0 * * * *'  # ogni ora
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,38 +10,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1️⃣ Checkout repository
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # 2️⃣ Setup Python
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
 
-    # 3️⃣ Install dependencies
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
+        pip install requests google-api-python-client google-auth google-auth-httplib2
 
-    # 4️⃣ Scrivere credenziali service account dal secret
-    - name: Write Service Account JSON
+    - name: Create service account file
       run: |
-        printf '%s' "${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}" > service_account.json
+        printf '%s' '${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' > service_account.json
 
-    # 5️⃣ Scarico e filtro CSV
     - name: Generate filtered CSV
       run: |
         python filter_feed.py
 
-    # 6️⃣ Upload su Google Drive
     - name: Upload filtered.csv to Drive
       run: |
         python upload_to_drive.py
 
-    # 7️⃣ Log finale
-    - name: Confirm
+    - name: Done
       run: |
-        echo "filtered.csv aggiornato su Drive. Apps Script può generare filtered_clean.csv automaticamente."
+        echo "CSV filtrato generato e caricato su Drive"
