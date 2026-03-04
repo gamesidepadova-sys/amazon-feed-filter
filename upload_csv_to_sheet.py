@@ -3,6 +3,7 @@ from pathlib import Path
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import re
 
 # =========================
 # CONFIGURAZIONE
@@ -64,8 +65,19 @@ def supplier_from_sku(sku: str) -> str:
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
+def clean_text(s: str) -> str:
+    """Rimuove caratteri invisibili, HTML, doppi apici, uniforma newline"""
+    if not s:
+        return ""
+    s = re.sub(r'[\x00-\x1F]', '', s)        # caratteri invisibili
+    s = s.replace('""', "'")                  # doppi apici
+    s = re.sub(r'<[^>]+>', '', s)            # tag HTML
+    s = s.replace('\r\n', '\n')              # newline uniformi
+    s = s.replace('\r', '\n')
+    return s.strip()
+
 # =========================
-# FILTRAGGIO CSV
+# FILTRAGGIO E PULIZIA CSV
 # =========================
 def filter_csv():
     raw = Path(INPUT_FILE).read_bytes()
@@ -115,15 +127,19 @@ def filter_csv():
             if qty < MIN_QTY:
                 continue
 
-            # Esclusioni titolo
+            # Esclusione titolo
             title = norm(row.get("titolo_prodotto"))
             if any(sub in title for sub in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
+            # --- PULIZIA TESTI EXTRA ---
+            for k in row:
+                row[k] = clean_text(row[k])
+
             writer.writerow(row)
             rows_out += 1
 
-    print("Filtered CSV ready!")
+    print("Filtered & Cleaned CSV ready!")
     print("Detected delimiter:", repr(delim))
     print(f"Rows read: {rows_in}")
     print(f"Rows written: {rows_out}")
