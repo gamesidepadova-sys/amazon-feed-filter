@@ -1,198 +1,131 @@
-#!/usr/bin/env python3
 import csv
-import os
-import time
-from typing import List, Any
+from pathlib import Path
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+# Input/Output
+INPUT_FILE = "source.csv"
+OUTPUT_FILE = "filtered.csv"
 
-INPUT_CSV = os.environ.get("FILTERED_LOCAL_FILE", "filtered.csv").strip()
+# Filtri
+ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
+ALLOWED_CAT1 = {
+    "informatica",
+    "audio e tv",
+    "clima e brico",
+    "consumabili e ufficio",
+    "salute, beauty e fitness",
+}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
+MIN_QTY = 10
 
-KEEP_COLUMNS = [
-    "cat1",
-    "sku",
-    "ean",
-    "mpn",
-    "quantita",
-    "prezzo_iva_esclusa",
-    "titolo_prodotto",
-    "costo_spedizione",
-]
+# -------------------------
+# Funzioni di supporto
+# -------------------------
+def detect_delim(text: str) -> str:
+    """Auto-detect CSV delimiter: tab -> pipe -> semicolon -> comma."""
+    try:
+        sample = text[:8192]
+        d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        return d.delimiter
+    except Exception:
+        first = text.splitlines()[0] if text else ""
+        if "\t" in first:
+            return "\t"
+        if "|" in first:
+            return "|"
+        if ";" in first and first.count(";") > first.count(","):
+            return ";"
+        return ","
 
-MAX_CELL_CHARS = 49000
+def to_int(x, default=0) -> int:
+    """Convert string/float to int safely."""
+    try:
+        s = str(x or "").strip()
+        if not s:
+            return default
+        return int(float(s.replace(",", ".")))
+    except Exception:
+        return default
 
-# Con batchUpdate possiamo inviare range grandi in una singola request.
-# Se il dataset è enorme, facciamo pochissimi batch (es. 5) per stare safe.
-MAX_ROWS_PER_BATCH = 20000  # 2 batch per ~44k, ok
+def supplier_from_sku(sku: str) -> str:
+    """Estrae il codice fornitore dal formato SKU tipico: T_0372_17077617000"""
+    parts = (sku or "").split("_")
+    if len(parts) >= 2 and parts[1].isdigit():
+        return parts[1]
+    for p in parts:
+        if len(p) == 4 and p.isdigit():
+            return p
+    return ""
 
+def norm(s: str) -> str:
+    return str(s or "").strip().lower()
 
-def detect_delimiter(first_line: str) -> str:
-    if "\t" in first_line:
-        return "\t"
-    if "|" in first_line:
-        return "|"
-    if ";" in first_line:
-        return ";"
-    return ","
-
-
-def safe_cell(x: Any) -> str:
-    s = "" if x is None else str(x)
-    if len(s) > MAX_CELL_CHARS:
-        return s[: MAX_CELL_CHARS - 1] + "…"
-    return s
-
-
-def retry(call_fn, max_tries=6):
-    delay = 2
-    for i in range(max_tries):
-        try:
-            return call_fn()
-        except HttpError as e:
-            status = getattr(e, "status_code", None)
-            # googleapiclient sometimes stores status in resp
-            if hasattr(e, "resp") and e.resp is not None:
-                status = e.resp.status
-            if status in (429, 500, 503):
-                if i == max_tries - 1:
-                    raise
-                time.sleep(delay)
-                delay = min(delay * 2, 30)
-                continue
-            raise
-
-
+# -------------------------
+# Script principale
+# -------------------------
 def main():
-    sheet_id = os.environ.get("FILTERED_SHEET_ID", "").strip()
-    tab_name = os.environ.get("FILTERED_TAB_NAME", "Filtered").strip()
+    # Leggi file sorgente
+    raw = Path(INPUT_FILE).read_bytes()
+    text = raw.decode("utf-8-sig", errors="replace")
+    delim = detect_delim(text)
 
-    if not sheet_id:
-        raise RuntimeError("FILTERED_SHEET_ID env var is missing or empty")
-    if not os.path.exists("sa.json"):
-        raise RuntimeError("sa.json not found")
+    reader = csv.DictReader(text.splitlines(), delimiter=delim)
+    if not reader.fieldnames:
+        raise RuntimeError(f"{INPUT_FILE} has no header row")
 
-    creds = service_account.Credentials.from_service_account_file(
-        "sa.json",
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
-    sheets = build("sheets", "v4", credentials=creds)
+    # Controllo colonne minime
+    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
+    missing = [c for c in required if c not in set(reader.fieldnames)]
+    if missing:
+        raise RuntimeError(f"Missing required columns: {missing}. Header={reader.fieldnames}")
 
-    # --- metadata & tab resolve ---
-    meta = retry(lambda: sheets.spreadsheets().get(spreadsheetId=sheet_id).execute())
-    sheet_objs = meta.get("sheets", [])
-    if not sheet_objs:
-        raise RuntimeError("Spreadsheet has no sheets/tabs")
+    rows_in = 0
+    rows_out = 0
 
-    title_to_sheet = {s["properties"]["title"]: s for s in sheet_objs}
-    if tab_name not in title_to_sheet:
-        real = sheet_objs[0]["properties"]["title"]
-        print(f"WARNING: tab '{tab_name}' not found. Using first tab: '{real}'")
-        tab_name = real
+    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
+        writer = csv.DictWriter(
+            fout,
+            fieldnames=reader.fieldnames,
+            delimiter=delim,
+            lineterminator="\n",
+            quoting=csv.QUOTE_MINIMAL,
+        )
+        writer.writeheader()
 
-    tab = title_to_sheet.get(tab_name) or sheet_objs[0]
-    props = tab["properties"]
-    sheet_title = props["title"]
-    sheet_gid = props["sheetId"]
-    grid = props.get("gridProperties", {})
-    current_rows = int(grid.get("rowCount", 1000))
-    current_cols = int(grid.get("columnCount", 26))
-
-    # --- read csv -> values ---
-    with open(INPUT_CSV, "r", encoding="utf-8-sig", newline="") as fin:
-        first = fin.readline()
-        fin.seek(0)
-        delim = detect_delimiter(first)
-
-        reader = csv.DictReader(fin, delimiter=delim)
-        if not reader.fieldnames:
-            raise RuntimeError(f"{INPUT_CSV} has no header row")
-
-        fieldnames = [h.strip() for h in reader.fieldnames]
-        norm_map = {h.lower(): h for h in fieldnames}
-
-        header_out: List[str] = []
-        for k in KEEP_COLUMNS:
-            if k.lower() in norm_map:
-                header_out.append(norm_map[k.lower()])
-
-        if "sku" not in [h.lower() for h in header_out]:
-            raise RuntimeError(f"{INPUT_CSV} missing required column 'sku'. Header={fieldnames}")
-
-        # stable lowercase header in sheet
-        std_header = [h.lower() for h in header_out]
-
-        values: List[List[str]] = [std_header]
-        rows = 0
         for row in reader:
-            out_row: List[str] = []
-            for orig_name in header_out:
-                out_row.append(safe_cell(row.get(orig_name, "")))
-            values.append(out_row)
-            rows += 1
+            rows_in += 1
 
-    needed_rows = len(values)
-    needed_cols = len(values[0])
+            sku = (row.get("sku") or "").strip()
+            if not sku:
+                continue
 
-    # --- resize grid if needed ---
-    new_rows = max(current_rows, needed_rows)
-    new_cols = max(current_cols, needed_cols)
-    if new_rows != current_rows or new_cols != current_cols:
-        print(f"Resizing sheet '{sheet_title}' grid: rows {current_rows}->{new_rows}, cols {current_cols}->{new_cols}")
-        retry(lambda: sheets.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={
-                "requests": [
-                    {
-                        "updateSheetProperties": {
-                            "properties": {
-                                "sheetId": sheet_gid,
-                                "gridProperties": {"rowCount": new_rows, "columnCount": new_cols},
-                            },
-                            "fields": "gridProperties(rowCount,columnCount)",
-                        }
-                    }
-                ]
-            },
-        ).execute())
+            # Supplier whitelist
+            supplier = supplier_from_sku(sku)
+            if supplier not in ALLOWED_SUPPLIERS:
+                continue
 
-    # --- clear ---
-    clear_range = f"{sheet_title}!A:ZZ"
-    retry(lambda: sheets.spreadsheets().values().clear(
-        spreadsheetId=sheet_id,
-        range=clear_range,
-        body={}
-    ).execute())
+            # Categoria
+            cat1 = norm(row.get("cat1"))
+            if cat1 not in ALLOWED_CAT1:
+                continue
 
-    # --- write using batchUpdate in VERY FEW requests ---
-    # We send multiple ranges in one batchUpdate call if needed.
-    data = []
-    start_row = 1  # 1-based
-    idx = 0
-    while idx < len(values):
-        chunk = values[idx: idx + MAX_ROWS_PER_BATCH]
-        rng = f"{sheet_title}!A{start_row}"
-        data.append({"range": rng, "values": chunk})
-        start_row += len(chunk)
-        idx += MAX_ROWS_PER_BATCH
+            # Quantità
+            qty = to_int(row.get("quantita"), 0)
+            if qty < MIN_QTY:
+                continue
 
-    def do_batch_write():
-        return sheets.spreadsheets().values().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={
-                "valueInputOption": "RAW",
-                "data": data
-            }
-        ).execute()
+            # Esclusione titoli
+            title = norm(row.get("titolo_prodotto"))
+            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
+                continue
 
-    retry(do_batch_write)
+            writer.writerow(row)
+            rows_out += 1
 
-    print(f"Uploaded {INPUT_CSV} -> Google Sheet {sheet_id} tab={sheet_title}")
-    print(f"Delimiter detected: {repr(delim)}")
-    print(f"Rows written: {rows} (+ header)")
-    print(f"Columns written: {needed_cols} -> {values[0]}")
-    print(f"Batch ranges sent: {len(data)} (MAX_ROWS_PER_BATCH={MAX_ROWS_PER_BATCH})")
+    print("Filtered CSV ready!")
+    print("Detected delimiter:", repr(delim))
+    print(f"Rows read: {rows_in}")
+    print(f"Rows written: {rows_out}")
+    print(f"Output file: {OUTPUT_FILE}")
 
 
 if __name__ == "__main__":
