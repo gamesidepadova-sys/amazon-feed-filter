@@ -54,19 +54,18 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML e doppi apici"""
+    """Rimuove caratteri invisibili e doppi apici, ma preserva HTML"""
     s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
+    s = re.sub(r"[\x00-\x1F]", "", s)  # invisibili
     s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", "\n")
+    s = s.replace("\r\n", "\n")  # newline uniformi
     return s
 
 # ----------------------
 # Script principale
 # ----------------------
 def main():
-    # Scarica CSV dall’URL
+    # Scarica CSV
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
@@ -90,7 +89,7 @@ def main():
             fieldnames=reader.fieldnames,
             delimiter=delim,
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL,  # <<< tutte le celle racchiuse tra virgolette
+            quoting=csv.QUOTE_ALL,  # <<< tutte le celle tra virgolette
         )
         writer.writeheader()
 
@@ -111,7 +110,7 @@ def main():
             title = norm(row.get("titolo_prodotto"))
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
 
-            # Pulizia dei campi
+            # Pulizia campi, HTML preservato
             cleaned_row = {k: clean_text(v) for k, v in row.items()}
             writer.writerow(cleaned_row)
             rows_out += 1
