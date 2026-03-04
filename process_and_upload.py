@@ -90,7 +90,7 @@ def main():
             fieldnames=reader.fieldnames,
             delimiter=delim,
             lineterminator="\n",
-            quoting=csv.QUOTE_MINIMAL,
+            quoting=csv.QUOTE_ALL,  # <<< tutte le celle racchiuse tra virgolette
         )
         writer.writeheader()
 
