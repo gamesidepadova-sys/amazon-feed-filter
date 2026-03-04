@@ -2,9 +2,9 @@ import csv
 import requests
 import re
 
-# -------------------------
-# Config
-# -------------------------
+# ----------------------
+# Configurazione
+# ----------------------
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "filtered_clean.csv"
 
@@ -16,14 +16,13 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
 MIN_QTY = 10
 
-# -------------------------
+# ----------------------
 # Funzioni di supporto
-# -------------------------
+# ----------------------
 def detect_delim(text: str) -> str:
-    """Auto-detect CSV delimiter: tab -> pipe -> semicolon -> comma."""
     try:
         sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
@@ -39,7 +38,6 @@ def detect_delim(text: str) -> str:
         return ","
 
 def to_int(x, default=0) -> int:
-    """Convert string/float to int safely."""
     try:
         s = str(x or "").strip()
         if not s:
@@ -49,7 +47,6 @@ def to_int(x, default=0) -> int:
         return default
 
 def supplier_from_sku(sku: str) -> str:
-    """Estrae il codice fornitore dal formato SKU tipico: T_0372_17077617000"""
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
         return parts[1]
@@ -62,32 +59,28 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, doppi apici e HTML"""
+    """Rimuove caratteri invisibili, HTML e doppi apici"""
     s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)       # caratteri invisibili
-    s = s.replace('""', "'")                 # doppie virgolette
-    s = re.sub(r"<[^>]+>", "", s)            # tag HTML
-    s = s.replace("\r\n", "\n")              # newline uniforme
+    s = re.sub(r"[\x00-\x1F]", "", s)          # caratteri invisibili
+    s = s.replace('""', "'")                    # doppi apici
+    s = re.sub(r"<[^>]+>", "", s)               # tag HTML
+    s = s.replace("\r\n", "\n")                 # newline uniformi
     return s
 
-def download_csv(url: str) -> str:
-    r = requests.get(url)
-    r.raise_for_status()
-    return r.text
-
-# -------------------------
+# ----------------------
 # Script principale
-# -------------------------
+# ----------------------
 def main():
-    # Scarica CSV
-    text = download_csv(INPUT_URL)
+    # Scarica CSV dall’URL
+    resp = requests.get(INPUT_URL)
+    resp.raise_for_status()
+    text = resp.content.decode("utf-8-sig", errors="replace")
     delim = detect_delim(text)
 
     reader = csv.DictReader(text.splitlines(), delimiter=delim)
     if not reader.fieldnames:
-        raise RuntimeError("CSV senza header")
+        raise RuntimeError("Il CSV scaricato non ha header")
 
-    # Verifica colonne minime
     required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
     missing = [c for c in required if c not in set(reader.fieldnames)]
     if missing:
@@ -121,7 +114,7 @@ def main():
             if cat1 not in ALLOWED_CAT1:
                 continue
 
-            qty = to_int(row.get("quantita"), 0)
+            qty = to_int(row.get("quantita"))
             if qty < MIN_QTY:
                 continue
 
@@ -129,13 +122,14 @@ def main():
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            # Pulizia finale dei valori
-            row_clean = {k: clean_text(v) for k, v in row.items()}
-            writer.writerow(row_clean)
+            # Pulizia dei campi
+            cleaned_row = {k: clean_text(v) for k, v in row.items()}
+
+            writer.writerow(cleaned_row)
             rows_out += 1
 
-    print("CSV filtrato e pulito pronto:", OUTPUT_FILE)
-    print(f"Righe lette: {rows_in}, scritte: {rows_out}, delimitatore: {repr(delim)}")
+    print("Filtered CSV pronto e pulito!")
+    print(f"Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
