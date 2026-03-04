@@ -10,17 +10,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # 1️⃣ Checkout del repository
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    # 2️⃣ Setup Python
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.12'
 
+    # 3️⃣ Installa le dipendenze necessarie solo per il filtraggio
     - name: Install dependencies
       run: |
         pip install requests
 
+    # 4️⃣ Esegui lo script di filtraggio CSV
     - name: Run CSV filter script
       run: python process_and_upload.py
+
+    # ✅ Output: filtered_clean.csv pronto nella repo/artifact
