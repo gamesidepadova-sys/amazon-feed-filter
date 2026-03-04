@@ -2,7 +2,7 @@ name: Build filtered CSV feed
 
 on:
   schedule:
-    - cron: "*/15 * * * *"   # ogni 15 minuti
+    - cron: "*/15 * * * *"  # ogni 15 minuti
   workflow_dispatch:
 
 concurrency:
@@ -14,59 +14,82 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Download source CSV
-        run: |
-          curl -L --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 3600 \
-            -o source.csv "${{ secrets.SOURCE_CSV_URL }}"
-          echo "Downloaded source.csv"
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
 
-      - name: Filter CSV
-        run: |
-          python filter_feed.py
-          echo "Filtered CSV created: filtered.csv"
-
-      - name: Install Google API deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth
 
-      - name: Write service account JSON to file
+      - name: Download source CSV
+        run: |
+          echo "Downloading source CSV..."
+          curl -L --retry 5 --retry-delay 5 --connect-timeout 30 --max-time 3600 \
+            -w "\nHTTP_CODE=%{http_code}\nFINAL_URL=%{url_effective}\n" \
+            "${{ secrets.SOURCE_CSV_URL }}" -o source.csv
+          echo "Source CSV downloaded:"
+          ls -lh source.csv
+          head -n 2 source.csv
+
+      - name: Run filter_feed.py
+        run: |
+          python filter_feed.py
+          ls -lh filtered.csv
+          head -n 2 filtered.csv
+
+      - name: Write service account JSON
         env:
           GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
         run: |
+          if [ -z "$GDRIVE_SA_JSON" ]; then
+            echo "Missing GDRIVE_SA_JSON secret"
+            exit 1
+          fi
           echo "$GDRIVE_SA_JSON" > sa.json
+          python - << 'PY'
+          import json
+          with open("sa.json") as f:
+              data = json.load(f)
+          print("Service account email:", data.get("client_email"))
+          PY
 
-      - name: Upload filtered.csv to Google Drive (overwrite by fileId)
+      - name: Upload filtered.csv to Google Drive
         env:
           GDRIVE_FILE_ID: ${{ secrets.GDRIVE_FILE_ID }}
         run: |
-          python - <<'PY'
+          if [ -z "$GDRIVE_FILE_ID" ]; then
+            echo "Missing GDRIVE_FILE_ID secret"
+            exit 1
+          fi
+
+          python - << 'PY'
           import os
           from google.oauth2 import service_account
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
-          file_id = os.environ.get("GDRIVE_FILE_ID", "").strip()
-          if not file_id:
-              raise RuntimeError("GDRIVE_FILE_ID is empty")
-
+          file_id = os.environ["GDRIVE_FILE_ID"]
           creds = service_account.Credentials.from_service_account_file(
               "sa.json",
               scopes=["https://www.googleapis.com/auth/drive"]
           )
-
           service = build("drive", "v3", credentials=creds)
-          media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
 
+          media = MediaFileUpload("filtered.csv", mimetype="text/csv", resumable=True)
           updated = service.files().update(fileId=file_id, media_body=media).execute()
-          print("Updated Drive file:", updated.get("id"))
+          print("Updated Drive file ID:", updated.get("id"))
           PY
 
-      - name: Upload artifact for debugging
+      - name: Upload artifact (debug)
         uses: actions/upload-artifact@v4
         with:
           name: filtered-feed
           path: filtered.csv
+          if-no-files-found: error
           retention-days: 3
