@@ -13,61 +13,61 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.12"
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
 
-    - name: Install dependencies
-      run: |
-        pip install requests
-        pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+      - name: Install dependencies
+        run: |
+          pip install requests
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-    - name: Generate filtered feed
-      run: python process_and_upload.py
+      - name: Generate filtered feed
+        run: python process_and_upload.py
 
-    - name: Prepare service account key
-      run: |
-        echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT }}" > sa.json
+      - name: Prepare service account key
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT }}" > sa.json
 
-    - name: Validate service account JSON
-      run: |
-        echo "Validating sa.json..."
-        python3 - << 'EOF'
-import json, sys
+      - name: Validate service account JSON
+        run: |
+          echo "Validating sa.json..."
+          python3 - << 'EOF'
+          import json, sys
 
-try:
-    with open("sa.json", "r") as f:
-        data = json.load(f)
-except Exception as e:
-    print("❌ ERRORE: sa.json non è un JSON valido.")
-    print("Dettagli:", e)
-    sys.exit(1)
+          try:
+              with open("sa.json", "r") as f:
+                  data = json.load(f)
+          except Exception as e:
+              print("❌ ERRORE: sa.json non è un JSON valido.")
+              print("Dettagli:", e)
+              sys.exit(1)
 
-required = ["type", "private_key", "client_email"]
-missing = [k for k in required if k not in data]
+          required = ["type", "private_key", "client_email"]
+          missing = [k for k in required if k not in data]
 
-if missing:
-    print("❌ ERRORE: Mancano campi obbligatori nel JSON:", missing)
-    sys.exit(1)
+          if missing:
+              print("❌ ERRORE: Mancano campi obbligatori nel JSON:", missing)
+              sys.exit(1)
 
-print("✅ sa.json valido e completo.")
-EOF
+          print("✅ sa.json valido e completo.")
+          EOF
 
-    - name: Upload feed to Google Drive
-      env:
-        FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
-      run: python upload_to_drive.py
+      - name: Upload feed to Google Drive
+        env:
+          FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
+        run: python upload_to_drive.py
 
-    - name: Commit filtered file
-      run: |
-        git config user.name "github-actions"
-        git config user.email "github-actions@github.com"
-        git add feed_poleepo.csv
-        git commit -m "Update feed" || echo "No changes to commit"
-        git push
+      - name: Commit filtered file
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add feed_poleepo.csv
+          git commit -m "Update feed" || echo "No changes to commit"
+          git push
