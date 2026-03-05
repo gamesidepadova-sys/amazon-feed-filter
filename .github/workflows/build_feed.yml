@@ -35,6 +35,30 @@ jobs:
       run: |
         echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT }}" > sa.json
 
+    - name: Validate service account JSON
+      run: |
+        echo "Validating sa.json..."
+        python3 - << 'EOF'
+import json, sys
+
+try:
+    with open("sa.json", "r") as f:
+        data = json.load(f)
+except Exception as e:
+    print("❌ ERRORE: sa.json non è un JSON valido.")
+    print("Dettagli:", e)
+    sys.exit(1)
+
+required = ["type", "private_key", "client_email"]
+missing = [k for k in required if k not in data]
+
+if missing:
+    print("❌ ERRORE: Mancano campi obbligatori nel JSON:", missing)
+    sys.exit(1)
+
+print("✅ sa.json valido e completo.")
+EOF
+
     - name: Upload feed to Google Drive
       env:
         FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
