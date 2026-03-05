@@ -49,20 +49,11 @@ def main():
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
 
-    # LEGGI IL CSV SENZA splitlines()
     f = io.StringIO(text)
-
     reader = csv.DictReader(f, delimiter="|")
-    print("HEADER SORGENTE:", reader.fieldnames)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-        writer = csv.DictWriter(
-            out,
-            fieldnames=TARGET_HEADERS,
-            delimiter="|",
-            quoting=csv.QUOTE_MINIMAL
-        )
-        writer.writeheader()
+        out.write("|".join(TARGET_HEADERS) + "\n")
 
         for row in reader:
             sku = (row.get("sku") or "").strip()
@@ -85,9 +76,8 @@ def main():
             if any(bad in title for bad in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            # COPIA ESATTA DELLA DESCRIZIONE (HTML INCLUSO)
-            out_row = {k: row.get(k, "") for k in TARGET_HEADERS}
-            writer.writerow(out_row)
+            values = [row.get(k, "") for k in TARGET_HEADERS]
+            out.write("|".join(values) + "\n")
 
     print("Creato:", OUTPUT_FILE)
 
