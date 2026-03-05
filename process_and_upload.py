@@ -2,6 +2,7 @@ import csv
 import html
 import re
 import requests
+from collections import defaultdict
 
 # ----------------------
 # Configurazione
@@ -43,6 +44,14 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
+def to_float(x, default=0.0) -> float:
+    try:
+        s = str(x or "").strip()
+        if not s: return default
+        return float(s.replace(",", "."))
+    except Exception:
+        return default
+
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
@@ -55,17 +64,11 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(text: str) -> str:
-    """Pulizia completa della descrizione"""
     if not text: return ""
-    # decodifica HTML entities
     text = html.unescape(text)
-    # rimuove tag HTML
     text = re.sub(r"<[^>]+>", " ", text)
-    # rimuove newline e ritorni a capo
     text = text.replace("\n", " ").replace("\r", " ")
-    # rimuove spazi multipli
     text = re.sub(r"\s+", " ", text)
-    # sostituisce doppi apici
     text = text.replace('""', "'")
     return text.strip()
 
@@ -90,36 +93,46 @@ def main():
     rows_in = 0
     rows_out = 0
 
+    # dict per gestire SKU duplicati: mantiene solo la quantità maggiore
+    sku_map = defaultdict(dict)
+
+    for row in reader:
+        rows_in += 1
+        sku = (row.get("sku") or "").strip()
+        if not sku: continue
+
+        supplier = supplier_from_sku(sku)
+        if supplier not in ALLOWED_SUPPLIERS: continue
+
+        cat1 = norm(row.get("cat1"))
+        if cat1 not in ALLOWED_CAT1: continue
+
+        qty = to_int(row.get("quantita"))
+        if qty < MIN_QTY: continue
+
+        title = norm(row.get("titolo_prodotto"))
+        if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
+
+        price = to_float(row.get("prezzo_iva_esclusa"), default=0.0)
+        if price <= 0.0: continue  # elimina prodotti senza prezzo
+
+        # Pulizia dei campi
+        cleaned_row = {k: clean_text(v) for k, v in row.items()}
+
+        # gestisci duplicati SKU: conserva la riga con quantità maggiore
+        if sku in sku_map:
+            if cleaned_row.get("quantita", 0) > sku_map[sku].get("quantita", 0):
+                sku_map[sku] = cleaned_row
+        else:
+            sku_map[sku] = cleaned_row
+
+    # scrive CSV finale
+    fieldnames = reader.fieldnames
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.DictWriter(
-            fout,
-            fieldnames=reader.fieldnames,
-            delimiter="|",
-            lineterminator="\n",
-            quoting=csv.QUOTE_MINIMAL,
-        )
+        writer = csv.DictWriter(fout, fieldnames=fieldnames, delimiter="|", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
         writer.writeheader()
-
-        for row in reader:
-            rows_in += 1
-            sku = (row.get("sku") or "").strip()
-            if not sku: continue
-
-            supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS: continue
-
-            cat1 = norm(row.get("cat1"))
-            if cat1 not in ALLOWED_CAT1: continue
-
-            qty = to_int(row.get("quantita"))
-            if qty < MIN_QTY: continue
-
-            title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
-
-            # Pulizia dei campi, descrizione inclusa
-            cleaned_row = {k: clean_text(v) for k, v in row.items()}
-            writer.writerow(cleaned_row)
+        for row in sku_map.values():
+            writer.writerow(row)
             rows_out += 1
 
     print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
