@@ -129,9 +129,12 @@ def main():
                 continue
 
             # Ricostruzione riga con struttura fissa
-            cleaned_row = {}
+            cleaned_row = {col: clean_text(row.get(col, "")) for col in EXPECTED_COLUMNS}
+
+            # Forza la presenza di tutte le colonne (evita slittamenti)
             for col in EXPECTED_COLUMNS:
-                cleaned_row[col] = clean_text(row.get(col, ""))
+                if cleaned_row[col] is None:
+                    cleaned_row[col] = ""
 
             writer.writerow(cleaned_row)
             rows_out += 1
