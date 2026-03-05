@@ -55,6 +55,7 @@ def main():
     text = resp.content.decode("utf-8-sig", errors="replace")
 
     delim = detect_delim(text)
+    print("Delimitatore rilevato:", repr(delim))
     reader = csv.DictReader(text.splitlines(), delimiter=delim)
 
     print("HEADER SORGENTE:", reader.fieldnames)
