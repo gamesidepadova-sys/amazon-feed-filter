@@ -1,5 +1,6 @@
 import csv
 import requests
+import io
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "filtered_clean.csv"
@@ -28,12 +29,6 @@ TARGET_HEADERS = [
     "costo_spedizione"
 ]
 
-def detect_delim(text):
-    try:
-        return csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
-    except:
-        return "|"
-
 def supplier_from_sku(sku):
     parts = sku.split("_")
     if len(parts) >= 2 and parts[1].isdigit():
@@ -54,15 +49,15 @@ def main():
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
 
-    delim = detect_delim(text)
-    print("Delimitatore rilevato:", repr(delim))
-    reader = csv.DictReader(text.splitlines(), delimiter=delim)
+    # LEGGI IL CSV SENZA splitlines()
+    f = io.StringIO(text)
 
+    reader = csv.DictReader(f, delimiter="|")
     print("HEADER SORGENTE:", reader.fieldnames)
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as f:
+    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
-            f,
+            out,
             fieldnames=TARGET_HEADERS,
             delimiter="|",
             quoting=csv.QUOTE_MINIMAL
@@ -90,9 +85,9 @@ def main():
             if any(bad in title for bad in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            # Copia i campi così come sono, senza pulizia
-            out = {k: row.get(k, "") for k in TARGET_HEADERS}
-            writer.writerow(out)
+            # COPIA ESATTA DELLA DESCRIZIONE (HTML INCLUSO)
+            out_row = {k: row.get(k, "") for k in TARGET_HEADERS}
+            writer.writerow(out_row)
 
     print("Creato:", OUTPUT_FILE)
 
