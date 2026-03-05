@@ -68,20 +68,18 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML e doppi apici"""
+    """Rimuove caratteri invisibili, HTML, newline e doppi apici"""
     s = str(s or "")
     s = re.sub(r"[\x00-\x1F]", "", s)
     s = s.replace('""', "'")
     s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", "\n")
-    s = s.replace("\n", " ")  # unifica newline in spazi
+    s = s.replace("\r\n", " ").replace("\n", " ")
     return s.strip()
 
 # ----------------------
 # Script principale
 # ----------------------
 def main():
-    # Scarica CSV dall’URL
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
@@ -91,16 +89,19 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
+    # Pulizia header: rimuove BOM, newline, caratteri invisibili
+    cleaned_headers = [h.replace("\ufeff", "").replace("\r", "").replace("\n", "").strip() for h in CLEAN_HEADERS]
+
     rows_in = 0
     rows_out = 0
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
             fout,
-            fieldnames=CLEAN_HEADERS,
+            fieldnames=cleaned_headers,
             delimiter="|",
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL,
+            quoting=csv.QUOTE_ALL
         )
         writer.writeheader()
 
@@ -122,7 +123,7 @@ def main():
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
 
             # Pulizia dei campi e selezione solo delle colonne finali
-            cleaned_row = {k: clean_text(row.get(k, "")) for k in CLEAN_HEADERS}
+            cleaned_row = {k: clean_text(row.get(k, "")) for k in cleaned_headers}
             writer.writerow(cleaned_row)
             rows_out += 1
 
