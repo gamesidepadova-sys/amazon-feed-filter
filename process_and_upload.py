@@ -23,7 +23,7 @@ MIN_QTY = 10
 # Funzioni di supporto
 # ----------------------
 def detect_delim(text: str) -> str:
-    """Rileva il delimitatore del CSV"""
+    """Rileva il delimitatore del CSV originale"""
     try:
         sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
@@ -55,13 +55,16 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML, pipe interni e doppi apici"""
+    """
+    Pulisce il testo: rimuove caratteri invisibili, HTML, pipe interne e newline
+    """
     s = str(s or "")
-    s = re.sub(r"<[^>]+>", "", s)           # rimuove tag HTML
-    s = re.sub(r"[\x00-\x1F]", "", s)      # rimuove caratteri invisibili
-    s = s.replace('""', '"')                # corregge doppi apici
-    s = s.replace("|", "/")                 # sostituisce pipe interni
-    s = s.replace("\r\n", "\n").replace("\r", "\n")  # uniforma newline
+    s = re.sub(r"<[^>]+>", "", s)        # rimuove HTML
+    s = re.sub(r"[\x00-\x1F]", " ", s)  # rimuove caratteri non stampabili
+    s = s.replace('"', "'")              # doppie virgolette → singolo apice
+    s = s.replace("|", "/")              # pipe interne → slash
+    s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")  # newline → spazio
+    s = re.sub(r"\s+", " ", s)           # multipli spazi → 1 spazio
     return s.strip()
 
 # ----------------------
@@ -92,28 +95,33 @@ def main():
             fieldnames=reader.fieldnames,
             delimiter="|",
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL,  # <<< Tutte le celle racchiuse tra virgolette
+            quoting=csv.QUOTE_ALL,  # tutte le celle tra virgolette
         )
         writer.writeheader()
 
         for row in reader:
             rows_in += 1
             sku = (row.get("sku") or "").strip()
-            if not sku: continue
+            if not sku:
+                continue
 
             supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS: continue
+            if supplier not in ALLOWED_SUPPLIERS:
+                continue
 
             cat1 = norm(row.get("cat1"))
-            if cat1 not in ALLOWED_CAT1: continue
+            if cat1 not in ALLOWED_CAT1:
+                continue
 
             qty = to_int(row.get("quantita"))
-            if qty < MIN_QTY: continue
+            if qty < MIN_QTY:
+                continue
 
             title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
+            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
+                continue
 
-            # Pulizia dei campi
+            # Pulizia definitiva di tutti i campi
             cleaned_row = {k: clean_text(v) for k, v in row.items()}
             writer.writerow(cleaned_row)
             rows_out += 1
