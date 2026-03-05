@@ -24,15 +24,26 @@ jobs:
         python-version: "3.12"
 
     - name: Install dependencies
-      run: pip install requests
+      run: |
+        pip install requests
+        pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
     - name: Generate filtered feed
       run: python process_and_upload.py
+
+    - name: Prepare service account key
+      run: |
+        echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT }}" > sa.json
+
+    - name: Upload feed to Google Drive
+      env:
+        FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
+      run: python upload_to_drive.py
 
     - name: Commit filtered file
       run: |
         git config user.name "github-actions"
         git config user.email "github-actions@github.com"
         git add feed_poleepo.csv
-        git commit -m "Update feed_poleepo.csv" || echo "No changes to commit"
+        git commit -m "Update feed" || echo "No changes to commit"
         git push
