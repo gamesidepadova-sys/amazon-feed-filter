@@ -20,6 +20,7 @@ ALLOWED_CAT1 = {
 }
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
 MIN_QTY = 10
+MAX_DESCRIPTION_LEN = 1500  # taglia descrizioni troppo lunghe
 
 # ----------------------
 # Funzioni di supporto
@@ -71,7 +72,11 @@ def clean_text(text: str) -> str:
     text = text.replace("\n", " ").replace("\r", " ")  # rimuove newline
     text = re.sub(r"\s+", " ", text)          # spazi multipli
     text = text.replace('""', "'")            # doppi apici interni
-    return text.strip()
+    text = text.strip()
+    # taglia la descrizione se troppo lunga
+    if len(text) > MAX_DESCRIPTION_LEN:
+        text = text[:MAX_DESCRIPTION_LEN] + "..."
+    return text
 
 # ----------------------
 # Script principale
@@ -94,7 +99,6 @@ def main():
     rows_in = 0
     rows_out = 0
 
-    # gestisce duplicati SKU → mantiene la riga con quantità maggiore
     sku_map = defaultdict(dict)
 
     for row in reader:
@@ -115,19 +119,19 @@ def main():
         if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
 
         price = to_float(row.get("prezzo_iva_esclusa"), default=0.0)
-        if price <= 0.0: continue  # elimina prodotti senza prezzo
+        if price <= 0.0: continue
 
         # pulizia completa dei campi
         cleaned_row = {k: clean_text(v) for k, v in row.items()}
 
-        # duplicati SKU → conserva la quantità maggiore
+        # duplicati SKU → conserva quantità maggiore
         if sku in sku_map:
             if to_int(cleaned_row.get("quantita")) > to_int(sku_map[sku].get("quantita")):
                 sku_map[sku] = cleaned_row
         else:
             sku_map[sku] = cleaned_row
 
-    # scrive CSV finale con QUOTE_ALL
+    # scrive CSV finale con QUOTE_ALL per compatibilità Poleepo
     fieldnames = reader.fieldnames
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
@@ -135,7 +139,7 @@ def main():
             fieldnames=fieldnames,
             delimiter="|",
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL  # tutti i campi tra doppi apici
+            quoting=csv.QUOTE_ALL
         )
         writer.writeheader()
         for row in sku_map.values():
