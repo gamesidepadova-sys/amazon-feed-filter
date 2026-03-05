@@ -89,6 +89,7 @@ def main():
             if any(bad in title for bad in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
+            # Copia i campi così come sono, senza pulizia
             out = {k: row.get(k, "") for k in TARGET_HEADERS}
             writer.writerow(out)
 
