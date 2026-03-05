@@ -34,12 +34,12 @@ def norm(s):
 # ----------------------
 with requests.get(INPUT_URL, stream=True) as resp:
     resp.raise_for_status()
-    # Lettura riga per riga, decoding UTF-8 con BOM
+    # Righe decodificate UTF-8-sig
     lines = (line.decode("utf-8-sig", errors="replace") for line in resp.iter_lines())
 
     with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline='') as fout:
         header = next(lines)
-        fout.write(header + "\n")  # Scrive l'header completo originale
+        fout.write(header + "\n")  # scrive header completo
 
         rows_in = 0
         rows_out = 0
@@ -47,7 +47,9 @@ with requests.get(INPUT_URL, stream=True) as resp:
         for line in lines:
             rows_in += 1
             parts = line.rstrip("\n").split("|")
-            if len(parts) < 5:
+
+            # Verifica che ci siano tutte le 14 colonne
+            if len(parts) < 14:
                 continue  # riga malformata
 
             sku = parts[1].strip()
@@ -57,7 +59,7 @@ with requests.get(INPUT_URL, stream=True) as resp:
             except:
                 qty = 0
 
-            # Filtri logici
+            # Filtri
             if not sku or supplier_from_sku(sku) not in ALLOWED_SUPPLIERS:
                 continue
             if cat1 not in ALLOWED_CAT1:
@@ -65,7 +67,7 @@ with requests.get(INPUT_URL, stream=True) as resp:
             if qty < MIN_QTY:
                 continue
 
-            # Scrive la riga intera così com’è, **tutte le colonne e descrizioni intatte**
+            # Scrive la riga intera senza modificare nulla
             fout.write(line + "\n")
             rows_out += 1
 
