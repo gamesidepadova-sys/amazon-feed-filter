@@ -38,10 +38,10 @@ def supplier_from_sku(sku):
 def norm(s): return str(s or "").strip().lower()
 
 def clean_text(s):
-    """Pulisce testo da caratteri invisibili e line break senza alterare virgolette"""
+    """Pulisce testo da invisibili e line break senza alterare virgolette"""
     s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)  # invisibili
-    s = re.sub(r"<[^>]+>", "", s)      # tag HTML
+    s = re.sub(r"[\x00-\x1F]", "", s)
+    s = re.sub(r"<[^>]+>", "", s)
     s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
     return s.strip()
 
