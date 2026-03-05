@@ -1,7 +1,6 @@
 import csv
 import requests
 import re
-import os
 
 # ----------------------
 # Configurazione
@@ -23,18 +22,6 @@ MIN_QTY = 10
 # ----------------------
 # Funzioni di supporto
 # ----------------------
-def detect_delim(text: str) -> str:
-    try:
-        sample = text[:8192]
-        d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        return d.delimiter
-    except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first: return "\t"
-        if "|" in first: return "|"
-        if ";" in first and first.count(";") > first.count(","): return ";"
-        return ","
-
 def to_int(x, default=0) -> int:
     try:
         s = str(x or "").strip()
@@ -54,16 +41,19 @@ def supplier_from_sku(sku: str) -> str:
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
-def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML e doppi apici, normalizza newline"""
-    s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
-    s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", "\n")
-    s = s.replace("\r", "\n")
-    s = s.replace("\n", " ")  # Evita newline interni nelle celle CSV
-    return s
+def clean_cell(cell: str) -> str:
+    """Rimuove HTML, newline e pipe interni, caratteri invisibili"""
+    if not cell:
+        return ""
+    # rimuove HTML
+    cell = re.sub(r"<[^>]+>", "", cell)
+    # rimuove caratteri invisibili
+    cell = re.sub(r"[\x00-\x1F]", " ", cell)
+    # sostituisce pipe e newline
+    cell = cell.replace("|", "/").replace("\n", " ").replace("\r", " ")
+    # sostituisce doppi apici
+    cell = cell.replace('"', "'")
+    return cell.strip()
 
 # ----------------------
 # Script principale
@@ -73,8 +63,9 @@ def main():
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
-    delim = detect_delim(text)
 
+    # Determina separatore
+    delim = "|" if "|" in text.splitlines()[0] else ","
     reader = csv.DictReader(text.splitlines(), delimiter=delim)
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
@@ -86,17 +77,10 @@ def main():
 
     rows_in = 0
     rows_out = 0
+    headers = reader.fieldnames
 
-    # Scrive il CSV filtrato mantenendo lo stesso numero di colonne e formato
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.DictWriter(
-            fout,
-            fieldnames=reader.fieldnames,
-            delimiter="|",
-            lineterminator="\n",
-            quoting=csv.QUOTE_MINIMAL  # Racchiude solo le celle con separatori o apici
-        )
-        writer.writeheader()
+        fout.write("|".join(headers) + "\n")  # header
 
         for row in reader:
             rows_in += 1
@@ -116,11 +100,12 @@ def main():
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
 
             # Pulizia dei campi
-            cleaned_row = {k: clean_text(v) for k, v in row.items()}
-            writer.writerow(cleaned_row)
+            cleaned_row = [clean_cell(row.get(h)) for h in headers]
+            fout.write("|".join(cleaned_row) + "\n")
             rows_out += 1
 
     print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
