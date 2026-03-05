@@ -1,6 +1,6 @@
 import csv
 import requests
-import re
+import io
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
@@ -51,75 +51,12 @@ def supplier_from_sku(sku: str) -> str:
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
-def clean_text(s: str) -> str:
-    s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
-    s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
-    return s.strip()
-
 def main():
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
 
-    delim = detect_delim(text)
-    reader = csv.DictReader(text.splitlines(), delimiter=delim)
+    # NON usare splitlines() → mantiene HTML e newline interni
+    f = io.StringIO(text)
 
-    if not reader.fieldnames:
-        raise RuntimeError("Il CSV scaricato non ha header")
-
-    ORIGINAL_COLUMNS = reader.fieldnames[:]
-    print(">>> HEADER ORIGINALE:", ORIGINAL_COLUMNS)
-
-    rows_in = 0
-    rows_out = 0
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as fout:
-        writer = csv.DictWriter(
-            fout,
-            fieldnames=ORIGINAL_COLUMNS,
-            delimiter="|",
-            lineterminator="\n",
-            quoting=csv.QUOTE_ALL
-        )
-        writer.writeheader()
-
-        for row in reader:
-            rows_in += 1
-
-            sku = (row.get("sku") or "").strip()
-            if not sku:
-                continue
-
-            supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS:
-                continue
-
-            cat1 = norm(row.get("cat1"))
-            if cat1 not in ALLOWED_CAT1:
-                continue
-
-            qty = to_int(row.get("quantita"))
-            if qty < MIN_QTY:
-                continue
-
-            title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
-                continue
-
-            cleaned_row = {col: clean_text(row.get(col, "")) for col in ORIGINAL_COLUMNS}
-
-            for col in ORIGINAL_COLUMNS:
-                if cleaned_row[col] is None:
-                    cleaned_row[col] = ""
-
-            writer.writerow(cleaned_row)
-            rows_out += 1
-
-    print(f"CSV filtrato pronto!")
-    print(f"Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
-
-if __name__ == "__main__":
-    main()
+    delim = detect_delim(text
