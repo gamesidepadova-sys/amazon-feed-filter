@@ -54,13 +54,14 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove ritorni a capo, doppi apici e HTML nelle descrizioni."""
+    """Rimuove caratteri invisibili, HTML e doppi apici"""
     s = str(s or "")
-    s = s.replace('\r', ' ').replace('\n', ' ')
-    s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)  # se vuoi togliere HTML, altrimenti commenta
     s = re.sub(r"[\x00-\x1F]", "", s)
-    return s.strip()
+    s = s.replace('""', "'")
+    s = re.sub(r"<[^>]+>", "", s)
+    s = s.replace("\r\n", "\n")
+    s = s.replace("\r", "\n")
+    return s
 
 # ----------------------
 # Script principale
@@ -76,8 +77,10 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
-    # Lista di colonne che vogliamo mantenere
-    fieldnames = reader.fieldnames
+    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
+    missing = [c for c in required if c not in set(reader.fieldnames)]
+    if missing:
+        raise RuntimeError(f"Colonne mancanti: {missing}. Header={reader.fieldnames}")
 
     rows_in = 0
     rows_out = 0
@@ -85,10 +88,10 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
             fout,
-            fieldnames=fieldnames,
-            delimiter='|',
-            quoting=csv.QUOTE_ALL,  # Quoting completo per evitare rotture riga
-            lineterminator="\n"
+            fieldnames=reader.fieldnames,
+            delimiter="|",
+            lineterminator="\n",
+            quoting=csv.QUOTE_ALL,  # <<< Tutte le celle racchiuse tra virgolette
         )
         writer.writeheader()
 
