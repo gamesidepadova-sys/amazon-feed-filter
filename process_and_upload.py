@@ -1,6 +1,7 @@
 import csv
-import requests
+import html
 import re
+import requests
 
 # ----------------------
 # Configurazione
@@ -53,19 +54,25 @@ def supplier_from_sku(sku: str) -> str:
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
-def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili e doppi apici, ma preserva HTML"""
-    s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)  # invisibili
-    s = s.replace('""', "'")
-    s = s.replace("\r\n", "\n")  # newline uniformi
-    return s
+def clean_text(text: str) -> str:
+    """Pulizia completa della descrizione"""
+    if not text: return ""
+    # decodifica HTML entities
+    text = html.unescape(text)
+    # rimuove tag HTML
+    text = re.sub(r"<[^>]+>", " ", text)
+    # rimuove newline e ritorni a capo
+    text = text.replace("\n", " ").replace("\r", " ")
+    # rimuove spazi multipli
+    text = re.sub(r"\s+", " ", text)
+    # sostituisce doppi apici
+    text = text.replace('""', "'")
+    return text.strip()
 
 # ----------------------
 # Script principale
 # ----------------------
 def main():
-    # Scarica CSV
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
@@ -75,7 +82,7 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
-    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
+    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto", "descrizione_prodotto"}
     missing = [c for c in required if c not in set(reader.fieldnames)]
     if missing:
         raise RuntimeError(f"Colonne mancanti: {missing}. Header={reader.fieldnames}")
@@ -87,9 +94,9 @@ def main():
         writer = csv.DictWriter(
             fout,
             fieldnames=reader.fieldnames,
-            delimiter=delim,
+            delimiter="|",
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL,  # <<< tutte le celle tra virgolette
+            quoting=csv.QUOTE_MINIMAL,
         )
         writer.writeheader()
 
@@ -110,12 +117,13 @@ def main():
             title = norm(row.get("titolo_prodotto"))
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
 
-            # Pulizia campi, HTML preservato
+            # Pulizia dei campi, descrizione inclusa
             cleaned_row = {k: clean_text(v) for k, v in row.items()}
             writer.writerow(cleaned_row)
             rows_out += 1
 
     print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
