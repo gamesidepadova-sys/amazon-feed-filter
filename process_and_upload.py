@@ -1,10 +1,6 @@
 import csv
 import requests
-import re
 
-# ----------------------
-# Configurazione
-# ----------------------
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "filtered_clean.csv"
 
@@ -16,11 +12,10 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 
-# Colonne finali del CSV
-CLEAN_HEADERS = [
+TARGET_HEADERS = [
     "cat1",
     "sku",
     "ean",
@@ -33,101 +28,68 @@ CLEAN_HEADERS = [
     "costo_spedizione"
 ]
 
-# ----------------------
-# Funzioni di supporto
-# ----------------------
-def detect_delim(text: str) -> str:
+def detect_delim(text):
     try:
-        sample = text[:8192]
-        d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        return d.delimiter
-    except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first: return "\t"
-        if "|" in first: return "|"
-        if ";" in first and first.count(";") > first.count(","): return ";"
-        return ","
+        return csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
+    except:
+        return "|"
 
-def to_int(x, default=0) -> int:
-    try:
-        s = str(x or "").strip()
-        if not s: return default
-        return int(float(s.replace(",", ".")))
-    except Exception:
-        return default
-
-def supplier_from_sku(sku: str) -> str:
-    parts = (sku or "").split("_")
+def supplier_from_sku(sku):
+    parts = sku.split("_")
     if len(parts) >= 2 and parts[1].isdigit():
         return parts[1]
     for p in parts:
-        if len(p) == 4 and p.isdigit(): return p
+        if len(p) == 4 and p.isdigit():
+            return p
     return ""
 
-def norm(s: str) -> str:
-    return str(s or "").strip().lower()
+def to_int(x):
+    try:
+        return int(float(str(x).replace(",", ".")))
+    except:
+        return 0
 
-def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML, newline e doppi apici"""
-    s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
-    s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", " ").replace("\n", " ")
-    return s.strip()
-
-# ----------------------
-# Script principale
-# ----------------------
 def main():
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
+
     delim = detect_delim(text)
-
     reader = csv.DictReader(text.splitlines(), delimiter=delim)
-    if not reader.fieldnames:
-        raise RuntimeError("Il CSV scaricato non ha header")
+    print("HEADER SORGENTE:", reader.fieldnames)
 
-    # Pulizia header: rimuove BOM, newline, caratteri invisibili
-    cleaned_headers = [h.replace("\ufeff", "").replace("\r", "").replace("\n", "").strip() for h in CLEAN_HEADERS]
 
-    rows_in = 0
-    rows_out = 0
+    print("Header sorgente:", reader.fieldnames)
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.DictWriter(
-            fout,
-            fieldnames=cleaned_headers,
-            delimiter="|",
-            lineterminator="\n",
-            quoting=csv.QUOTE_ALL
-        )
+    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=TARGET_HEADERS, delimiter="|", quoting=csv.QUOTE_MINIMAL)
         writer.writeheader()
 
         for row in reader:
-            rows_in += 1
             sku = (row.get("sku") or "").strip()
-            if not sku: continue
+            if not sku:
+                continue
 
             supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS: continue
+            if supplier not in ALLOWED_SUPPLIERS:
+                continue
 
-            cat1 = norm(row.get("cat1"))
-            if cat1 not in ALLOWED_CAT1: continue
+            cat1 = (row.get("cat1") or "").strip().lower()
+            if cat1 not in ALLOWED_CAT1:
+                continue
 
             qty = to_int(row.get("quantita"))
-            if qty < MIN_QTY: continue
+            if qty < MIN_QTY:
+                continue
 
-            title = norm(row.get("titolo_prodotto"))
-            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
+            title = (row.get("titolo_prodotto") or "").lower()
+            if any(bad in title for bad in EXCLUDE_TITLE_SUBSTRINGS):
+                continue
 
-            # Pulizia dei campi e selezione solo delle colonne finali
-            cleaned_row = {k: clean_text(row.get(k, "")) for k in cleaned_headers}
-            writer.writerow(cleaned_row)
-            rows_out += 1
+            out = {k: row.get(k, "") for k in TARGET_HEADERS}
+            writer.writerow(out)
 
-    print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
+    print("Creato:", OUTPUT_FILE)
 
 if __name__ == "__main__":
     main()
