@@ -64,12 +64,13 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(text: str) -> str:
+    """Pulizia definitiva della descrizione e dei campi"""
     if not text: return ""
-    text = html.unescape(text)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = text.replace("\n", " ").replace("\r", " ")
-    text = re.sub(r"\s+", " ", text)
-    text = text.replace('""', "'")
+    text = html.unescape(text)                # decodifica HTML entities
+    text = re.sub(r"<[^>]+>", " ", text)      # rimuove tag HTML
+    text = text.replace("\n", " ").replace("\r", " ")  # rimuove newline
+    text = re.sub(r"\s+", " ", text)          # spazi multipli
+    text = text.replace('""', "'")            # doppi apici interni
     return text.strip()
 
 # ----------------------
@@ -93,7 +94,7 @@ def main():
     rows_in = 0
     rows_out = 0
 
-    # dict per gestire SKU duplicati: mantiene solo la quantità maggiore
+    # gestisce duplicati SKU → mantiene la riga con quantità maggiore
     sku_map = defaultdict(dict)
 
     for row in reader:
@@ -116,27 +117,32 @@ def main():
         price = to_float(row.get("prezzo_iva_esclusa"), default=0.0)
         if price <= 0.0: continue  # elimina prodotti senza prezzo
 
-        # Pulizia dei campi
+        # pulizia completa dei campi
         cleaned_row = {k: clean_text(v) for k, v in row.items()}
 
-        # gestisci duplicati SKU: conserva la riga con quantità maggiore
+        # duplicati SKU → conserva la quantità maggiore
         if sku in sku_map:
-            if cleaned_row.get("quantita", 0) > sku_map[sku].get("quantita", 0):
+            if to_int(cleaned_row.get("quantita")) > to_int(sku_map[sku].get("quantita")):
                 sku_map[sku] = cleaned_row
         else:
             sku_map[sku] = cleaned_row
 
-    # scrive CSV finale
+    # scrive CSV finale con QUOTE_ALL
     fieldnames = reader.fieldnames
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
-        writer = csv.DictWriter(fout, fieldnames=fieldnames, delimiter="|", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+        writer = csv.DictWriter(
+            fout,
+            fieldnames=fieldnames,
+            delimiter="|",
+            lineterminator="\n",
+            quoting=csv.QUOTE_ALL  # tutti i campi tra doppi apici
+        )
         writer.writeheader()
         for row in sku_map.values():
             writer.writerow(row)
             rows_out += 1
 
     print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
-
 
 if __name__ == "__main__":
     main()
