@@ -1,7 +1,6 @@
 import csv
 import requests
 import re
-from collections import Counter
 
 # ----------------------
 # Configurazione
@@ -22,9 +21,12 @@ ALLOWED_CAT1 = {
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
 MIN_QTY = 10
 
-# Per audit
-exclusion_reasons = Counter()
-
+# Struttura fissa richiesta
+EXPECTED_COLUMNS = [
+    "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
+    "titolo_prodotto","immagine_principale","descrizione_prodotto",
+    "costo_spedizione","cat2","cat3","marca","peso"
+]
 
 # ----------------------
 # Funzioni di supporto
@@ -36,12 +38,9 @@ def detect_delim(text: str) -> str:
         return d.delimiter
     except Exception:
         first = text.splitlines()[0] if text else ""
-        if "\t" in first:
-            return "\t"
-        if "|" in first:
-            return "|"
-        if ";" in first and first.count(";") > first.count(","):
-            return ";"
+        if "\t" in first: return "\t"
+        if "|" in first: return "|"
+        if ";" in first and first.count(";") > first.count(","): return ";"
         return ","
 
 
@@ -71,11 +70,11 @@ def norm(s: str) -> str:
 
 def clean_text(s: str) -> str:
     s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
+    s = re.sub(r"[\x00-\x1F]", "", s)  # invisibili
     s = s.replace('""', "'")
-    s = re.sub(r"<[^>]+>", "", s)
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    return s
+    s = re.sub(r"<[^>]+>", "", s)  # HTML
+    s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    return s.strip()
 
 
 # ----------------------
@@ -92,18 +91,14 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
-    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto"}
-    missing = [c for c in required if c not in set(reader.fieldnames)]
-    if missing:
-        raise RuntimeError(f"Colonne mancanti: {missing}. Header={reader.fieldnames}")
-
     rows_in = 0
     rows_out = 0
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
+    # Scrittura UTF‑8 con BOM
+    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as fout:
         writer = csv.DictWriter(
             fout,
-            fieldnames=reader.fieldnames,
+            fieldnames=EXPECTED_COLUMNS,
             delimiter="|",
             lineterminator="\n",
             quoting=csv.QUOTE_ALL
@@ -115,38 +110,34 @@ def main():
 
             sku = (row.get("sku") or "").strip()
             if not sku:
-                exclusion_reasons["sku_vuoto"] += 1
                 continue
 
             supplier = supplier_from_sku(sku)
             if supplier not in ALLOWED_SUPPLIERS:
-                exclusion_reasons["supplier_non_ammesso"] += 1
                 continue
 
             cat1 = norm(row.get("cat1"))
             if cat1 not in ALLOWED_CAT1:
-                exclusion_reasons["cat1_non_ammessa"] += 1
                 continue
 
             qty = to_int(row.get("quantita"))
             if qty < MIN_QTY:
-                exclusion_reasons["quantita_bassa"] += 1
                 continue
 
             title = norm(row.get("titolo_prodotto"))
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
-                exclusion_reasons["titolo_escluso"] += 1
                 continue
 
-            cleaned_row = {k: clean_text(v) for k, v in row.items()}
+            # Ricostruzione riga con struttura fissa
+            cleaned_row = {}
+            for col in EXPECTED_COLUMNS:
+                cleaned_row[col] = clean_text(row.get(col, ""))
+
             writer.writerow(cleaned_row)
             rows_out += 1
 
     print(f"CSV filtrato pronto!")
     print(f"Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
-    print("\nMotivi di esclusione:")
-    for reason, count in exclusion_reasons.items():
-        print(f"- {reason}: {count}")
 
 
 if __name__ == "__main__":
