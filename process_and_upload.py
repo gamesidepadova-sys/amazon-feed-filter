@@ -1,8 +1,6 @@
 import csv
-import html
-import re
 import requests
-from collections import defaultdict
+import re
 
 # ----------------------
 # Configurazione
@@ -20,7 +18,20 @@ ALLOWED_CAT1 = {
 }
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
 MIN_QTY = 10
-MAX_DESCRIPTION_LEN = 1500  # taglia descrizioni troppo lunghe
+
+# Colonne finali del CSV
+CLEAN_HEADERS = [
+    "cat1",
+    "sku",
+    "ean",
+    "mpn",
+    "quantita",
+    "prezzo_iva_esclusa",
+    "titolo_prodotto",
+    "immagine_principale",
+    "descrizione_prodotto",
+    "costo_spedizione"
+]
 
 # ----------------------
 # Funzioni di supporto
@@ -45,14 +56,6 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
-def to_float(x, default=0.0) -> float:
-    try:
-        s = str(x or "").strip()
-        if not s: return default
-        return float(s.replace(",", "."))
-    except Exception:
-        return default
-
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
@@ -64,24 +67,21 @@ def supplier_from_sku(sku: str) -> str:
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
-def clean_text(text: str) -> str:
-    """Pulizia definitiva della descrizione e dei campi"""
-    if not text: return ""
-    text = html.unescape(text)                # decodifica HTML entities
-    text = re.sub(r"<[^>]+>", " ", text)      # rimuove tag HTML
-    text = text.replace("\n", " ").replace("\r", " ")  # rimuove newline
-    text = re.sub(r"\s+", " ", text)          # spazi multipli
-    text = text.replace('""', "'")            # doppi apici interni
-    text = text.strip()
-    # taglia la descrizione se troppo lunga
-    if len(text) > MAX_DESCRIPTION_LEN:
-        text = text[:MAX_DESCRIPTION_LEN] + "..."
-    return text
+def clean_text(s: str) -> str:
+    """Rimuove caratteri invisibili, HTML e doppi apici"""
+    s = str(s or "")
+    s = re.sub(r"[\x00-\x1F]", "", s)
+    s = s.replace('""', "'")
+    s = re.sub(r"<[^>]+>", "", s)
+    s = s.replace("\r\n", "\n")
+    s = s.replace("\n", " ")  # unifica newline in spazi
+    return s.strip()
 
 # ----------------------
 # Script principale
 # ----------------------
 def main():
+    # Scarica CSV dall’URL
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
@@ -91,59 +91,39 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
-    required = {"cat1", "sku", "quantita", "prezzo_iva_esclusa", "titolo_prodotto", "descrizione_prodotto"}
-    missing = [c for c in required if c not in set(reader.fieldnames)]
-    if missing:
-        raise RuntimeError(f"Colonne mancanti: {missing}. Header={reader.fieldnames}")
-
     rows_in = 0
     rows_out = 0
 
-    sku_map = defaultdict(dict)
-
-    for row in reader:
-        rows_in += 1
-        sku = (row.get("sku") or "").strip()
-        if not sku: continue
-
-        supplier = supplier_from_sku(sku)
-        if supplier not in ALLOWED_SUPPLIERS: continue
-
-        cat1 = norm(row.get("cat1"))
-        if cat1 not in ALLOWED_CAT1: continue
-
-        qty = to_int(row.get("quantita"))
-        if qty < MIN_QTY: continue
-
-        title = norm(row.get("titolo_prodotto"))
-        if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
-
-        price = to_float(row.get("prezzo_iva_esclusa"), default=0.0)
-        if price <= 0.0: continue
-
-        # pulizia completa dei campi
-        cleaned_row = {k: clean_text(v) for k, v in row.items()}
-
-        # duplicati SKU → conserva quantità maggiore
-        if sku in sku_map:
-            if to_int(cleaned_row.get("quantita")) > to_int(sku_map[sku].get("quantita")):
-                sku_map[sku] = cleaned_row
-        else:
-            sku_map[sku] = cleaned_row
-
-    # scrive CSV finale con QUOTE_ALL per compatibilità Poleepo
-    fieldnames = reader.fieldnames
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
             fout,
-            fieldnames=fieldnames,
+            fieldnames=CLEAN_HEADERS,
             delimiter="|",
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL
+            quoting=csv.QUOTE_ALL,
         )
         writer.writeheader()
-        for row in sku_map.values():
-            writer.writerow(row)
+
+        for row in reader:
+            rows_in += 1
+            sku = (row.get("sku") or "").strip()
+            if not sku: continue
+
+            supplier = supplier_from_sku(sku)
+            if supplier not in ALLOWED_SUPPLIERS: continue
+
+            cat1 = norm(row.get("cat1"))
+            if cat1 not in ALLOWED_CAT1: continue
+
+            qty = to_int(row.get("quantita"))
+            if qty < MIN_QTY: continue
+
+            title = norm(row.get("titolo_prodotto"))
+            if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS): continue
+
+            # Pulizia dei campi e selezione solo delle colonne finali
+            cleaned_row = {k: clean_text(row.get(k, "")) for k in CLEAN_HEADERS}
+            writer.writerow(cleaned_row)
             rows_out += 1
 
     print(f"CSV filtrato pronto! Rows in: {rows_in}, Rows out: {rows_out}, Output: {OUTPUT_FILE}")
