@@ -1,5 +1,10 @@
+import requests
+
+# ----------------------
+# Configurazione
+# ----------------------
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
-OUTPUT_FILE = "filtered_clean.csv"  # CSV filtrato da fornire a Poleepo
+OUTPUT_FILE = "filtered_clean.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0383"}
 ALLOWED_CAT1 = {
@@ -27,30 +32,35 @@ def norm(s):
 # ----------------------
 # Script principale
 # ----------------------
-with open(INPUT_FILE, "r", encoding="utf-8-sig") as fin, \
-     open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline='') as fout:
+with requests.get(INPUT_URL, stream=True) as resp:
+    resp.raise_for_status()
+    lines = (line.decode("utf-8-sig") for line in resp.iter_lines())
 
-    header = fin.readline()
-    fout.write(header)  # Scrive tutte le colonne originali
+    with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline='') as fout:
+        header = next(lines)
+        fout.write(header + "\n")  # Scrive header originale completo
 
-    for line in fin:
-        parts = line.rstrip("\n").split("|")
-        if len(parts) < 5:
-            continue  # riga malformata
+        for line in lines:
+            parts = line.rstrip("\n").split("|")
+            if len(parts) < 5:
+                continue  # riga malformata
 
-        sku = parts[1].strip()
-        cat1 = norm(parts[0])
-        try:
-            qty = int(parts[4])
-        except:
-            qty = 0
+            sku = parts[1].strip()
+            cat1 = norm(parts[0])
+            try:
+                qty = int(parts[4])
+            except:
+                qty = 0
 
-        # Applica filtri
-        if not sku or supplier_from_sku(sku) not in ALLOWED_SUPPLIERS:
-            continue
-        if cat1 not in ALLOWED_CAT1:
-            continue
-        if qty < MIN_QTY:
-            continue
+            # Applica filtri
+            if not sku or supplier_from_sku(sku) not in ALLOWED_SUPPLIERS:
+                continue
+            if cat1 not in ALLOWED_CAT1:
+                continue
+            if qty < MIN_QTY:
+                continue
 
-        fout.write(line)  # Scrive la riga intera così com’è
+            # Scrive la riga completa così com’è, senza modificare contenuto
+            fout.write(line + "\n")
+
+print(f"CSV filtrato pronto: {OUTPUT_FILE}")
