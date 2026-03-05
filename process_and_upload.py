@@ -21,16 +21,6 @@ ALLOWED_CAT1 = {
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}  # case insensitive
 MIN_QTY = 10
 
-# Struttura fissa richiesta
-EXPECTED_COLUMNS = [
-    "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
-    "titolo_prodotto","immagine_principale","descrizione_prodotto",
-    "costo_spedizione","cat2","cat3","marca","peso"
-]
-
-print(">>> VERSIONE CORRETTA DI process_and_upload.py IN ESECUZIONE <<<")
-print(">>> HEADER FISSO:", "|".join(EXPECTED_COLUMNS))
-
 # ----------------------
 # Funzioni di supporto
 # ----------------------
@@ -94,7 +84,8 @@ def main():
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
 
-    print(">>> HEADER ORIGINALE RILEVATO:", reader.fieldnames)
+    ORIGINAL_COLUMNS = reader.fieldnames[:]  # tutte le colonne presenti nel file
+    print(">>> HEADER ORIGINALE:", ORIGINAL_COLUMNS)
 
     rows_in = 0
     rows_out = 0
@@ -103,7 +94,7 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline="") as fout:
         writer = csv.DictWriter(
             fout,
-            fieldnames=EXPECTED_COLUMNS,
+            fieldnames=ORIGINAL_COLUMNS,
             delimiter="|",
             lineterminator="\n",
             quoting=csv.QUOTE_ALL
@@ -133,11 +124,11 @@ def main():
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            # Ricostruzione riga con struttura fissa
-            cleaned_row = {col: clean_text(row.get(col, "")) for col in EXPECTED_COLUMNS}
+            # Ricostruzione riga con tutte le colonne originali
+            cleaned_row = {col: clean_text(row.get(col, "")) for col in ORIGINAL_COLUMNS}
 
-            # Forza la presenza di tutte le colonne (evita slittamenti)
-            for col in EXPECTED_COLUMNS:
+            # Forza la presenza di tutte le colonne
+            for col in ORIGINAL_COLUMNS:
                 if cleaned_row[col] is None:
                     cleaned_row[col] = ""
 
