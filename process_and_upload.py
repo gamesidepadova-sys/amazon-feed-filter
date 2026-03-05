@@ -28,6 +28,9 @@ EXPECTED_COLUMNS = [
     "costo_spedizione","cat2","cat3","marca","peso"
 ]
 
+print(">>> VERSIONE CORRETTA DI process_and_upload.py IN ESECUZIONE <<<")
+print(">>> HEADER FISSO:", "|".join(EXPECTED_COLUMNS))
+
 # ----------------------
 # Funzioni di supporto
 # ----------------------
@@ -90,6 +93,8 @@ def main():
 
     if not reader.fieldnames:
         raise RuntimeError("Il CSV scaricato non ha header")
+
+    print(">>> HEADER ORIGINALE RILEVATO:", reader.fieldnames)
 
     rows_in = 0
     rows_out = 0
