@@ -59,4 +59,4 @@ def main():
     # NON usare splitlines() → mantiene HTML e newline interni
     f = io.StringIO(text)
 
-    delim = detect_delim(text
+    delim = detect_delim(text)
