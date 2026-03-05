@@ -1,8 +1,10 @@
 import csv
 import requests
 import re
-from io import StringIO
 
+# ----------------------
+# Configurazione
+# ----------------------
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "filtered_clean.csv"
 
@@ -21,26 +23,30 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 
 
-def detect_delim(text):
+# ----------------------
+# Funzioni
+# ----------------------
+
+def detect_delim(text: str) -> str:
     try:
         sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
-    except:
+    except Exception:
         return "|"
 
 
-def to_int(x, default=0):
+def to_int(x, default=0) -> int:
     try:
         s = str(x or "").strip()
         if not s:
             return default
         return int(float(s.replace(",", ".")))
-    except:
+    except Exception:
         return default
 
 
-def supplier_from_sku(sku):
+def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
         return parts[1]
@@ -50,21 +56,39 @@ def supplier_from_sku(sku):
     return ""
 
 
-def norm(s):
+def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 
-def clean_text(s):
+def clean_text(s: str) -> str:
     s = str(s or "")
-    s = re.sub(r"[\x00-\x1F]", "", s)
-    s = s.replace('""', "'")
-    s = s.replace("\r\n", " ")
+
+    # rimuove caratteri invisibili
+    s = re.sub(r"[\x00-\x1F\x7F]", " ", s)
+
+    # rimuove HTML
+    s = re.sub(r"<[^>]+>", " ", s)
+
+    # rimuove newline veri
     s = s.replace("\r", " ")
     s = s.replace("\n", " ")
-    return s
 
+    # spazi multipli
+    s = re.sub(r"\s+", " ", s)
+
+    # virgolette doppie
+    s = s.replace('"', "'")
+
+    return s.strip()
+
+
+# ----------------------
+# Script principale
+# ----------------------
 
 def main():
+
+    print("Scarico CSV...")
 
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
@@ -73,8 +97,7 @@ def main():
 
     delim = detect_delim(text)
 
-    # PARSING CORRETTO CSV MULTILINEA
-    reader = csv.DictReader(StringIO(text), delimiter=delim)
+    reader = csv.DictReader(text.splitlines(), delimiter=delim)
 
     rows_in = 0
     rows_out = 0
@@ -85,8 +108,8 @@ def main():
             fout,
             fieldnames=reader.fieldnames,
             delimiter="|",
-            quoting=csv.QUOTE_MINIMAL,
             lineterminator="\n",
+            quoting=csv.QUOTE_MINIMAL,
         )
 
         writer.writeheader()
@@ -115,13 +138,16 @@ def main():
             if any(substr in title for substr in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            cleaned = {k: clean_text(v) for k, v in row.items()}
+            cleaned_row = {k: clean_text(v) for k, v in row.items()}
 
-            writer.writerow(cleaned)
+            writer.writerow(cleaned_row)
 
             rows_out += 1
 
-    print(f"rows_in={rows_in} rows_out={rows_out}")
+    print("----")
+    print("Rows input:", rows_in)
+    print("Rows output:", rows_out)
+    print("File:", OUTPUT_FILE)
 
 
 if __name__ == "__main__":
