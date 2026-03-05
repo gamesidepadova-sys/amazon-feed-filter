@@ -34,13 +34,18 @@ def norm(s):
 # ----------------------
 with requests.get(INPUT_URL, stream=True) as resp:
     resp.raise_for_status()
-    lines = (line.decode("utf-8-sig") for line in resp.iter_lines())
+    # Lettura riga per riga, decoding UTF-8 con BOM
+    lines = (line.decode("utf-8-sig", errors="replace") for line in resp.iter_lines())
 
     with open(OUTPUT_FILE, "w", encoding="utf-8-sig", newline='') as fout:
         header = next(lines)
-        fout.write(header + "\n")  # Scrive header originale completo
+        fout.write(header + "\n")  # Scrive l'header completo originale
+
+        rows_in = 0
+        rows_out = 0
 
         for line in lines:
+            rows_in += 1
             parts = line.rstrip("\n").split("|")
             if len(parts) < 5:
                 continue  # riga malformata
@@ -52,7 +57,7 @@ with requests.get(INPUT_URL, stream=True) as resp:
             except:
                 qty = 0
 
-            # Applica filtri
+            # Filtri logici
             if not sku or supplier_from_sku(sku) not in ALLOWED_SUPPLIERS:
                 continue
             if cat1 not in ALLOWED_CAT1:
@@ -60,7 +65,9 @@ with requests.get(INPUT_URL, stream=True) as resp:
             if qty < MIN_QTY:
                 continue
 
-            # Scrive la riga completa così com’è, senza modificare contenuto
+            # Scrive la riga intera così com’è, **tutte le colonne e descrizioni intatte**
             fout.write(line + "\n")
+            rows_out += 1
 
 print(f"CSV filtrato pronto: {OUTPUT_FILE}")
+print(f"Righe lette: {rows_in}, Righe scritte: {rows_out}")
