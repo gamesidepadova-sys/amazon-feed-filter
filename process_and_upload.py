@@ -1,6 +1,7 @@
 import csv
 import requests
 import re
+import os
 
 # ----------------------
 # Configurazione
@@ -54,13 +55,14 @@ def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(s: str) -> str:
-    """Rimuove caratteri invisibili, HTML e doppi apici"""
+    """Rimuove caratteri invisibili, HTML e doppi apici, normalizza newline"""
     s = str(s or "")
     s = re.sub(r"[\x00-\x1F]", "", s)
     s = s.replace('""', "'")
     s = re.sub(r"<[^>]+>", "", s)
     s = s.replace("\r\n", "\n")
     s = s.replace("\r", "\n")
+    s = s.replace("\n", " ")  # Evita newline interni nelle celle CSV
     return s
 
 # ----------------------
@@ -85,13 +87,14 @@ def main():
     rows_in = 0
     rows_out = 0
 
+    # Scrive il CSV filtrato mantenendo lo stesso numero di colonne e formato
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as fout:
         writer = csv.DictWriter(
             fout,
             fieldnames=reader.fieldnames,
             delimiter="|",
             lineterminator="\n",
-            quoting=csv.QUOTE_ALL,  # <<< Tutte le celle racchiuse tra virgolette
+            quoting=csv.QUOTE_MINIMAL  # Racchiude solo le celle con separatori o apici
         )
         writer.writeheader()
 
