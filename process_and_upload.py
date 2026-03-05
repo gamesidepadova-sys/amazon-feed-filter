@@ -56,13 +56,16 @@ def main():
 
     delim = detect_delim(text)
     reader = csv.DictReader(text.splitlines(), delimiter=delim)
+
     print("HEADER SORGENTE:", reader.fieldnames)
 
-
-    print("Header sorgente:", reader.fieldnames)
-
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=TARGET_HEADERS, delimiter="|", quoting=csv.QUOTE_MINIMAL)
+        writer = csv.DictWriter(
+            f,
+            fieldnames=TARGET_HEADERS,
+            delimiter="|",
+            quoting=csv.QUOTE_MINIMAL
+        )
         writer.writeheader()
 
         for row in reader:
