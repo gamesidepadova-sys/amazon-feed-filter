@@ -60,3 +60,5 @@ def main():
     f = io.StringIO(text)
 
     delim = detect_delim(text)
+with open("feed_poleepo.csv", "a", newline="") as f:
+    f.write("\n# test upload for workflow")
