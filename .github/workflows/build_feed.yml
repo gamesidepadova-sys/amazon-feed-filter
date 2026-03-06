@@ -1,7 +1,9 @@
 name: Build Feed (Force Upload Definitivo)
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"  # ogni 30 minuti
+  workflow_dispatch:         # permette anche run manuale
 
 permissions:
   contents: write
@@ -66,11 +68,6 @@ jobs:
               scopes=["https://www.googleapis.com/auth/drive"]
           )
           service = build("drive", "v3", credentials=creds)
-
-          # FORZA una modifica visibile
-          with open("feed_poleepo.csv", "a", newline="") as f:
-              f.write("# forced upload test\n")
-              f.flush()
 
           # Upload
           media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
