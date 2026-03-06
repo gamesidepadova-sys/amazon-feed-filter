@@ -17,10 +17,11 @@ ALLOWED_CAT1 = {
 }
 
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
-
 MIN_QTY = 10
 
-
+# -----------------------------
+# Funzioni di utilità
+# -----------------------------
 def detect_delim(text: str) -> str:
     try:
         sample = text[:8192]
@@ -28,24 +29,18 @@ def detect_delim(text: str) -> str:
         return d.delimiter
     except Exception:
         first = text.splitlines()[0] if text else ""
-        if "\t" in first:
-            return "\t"
-        if "|" in first:
-            return "|"
-        if ";" in first and first.count(";") > first.count(","):
-            return ";"
+        if "\t" in first: return "\t"
+        if "|" in first: return "|"
+        if ";" in first and first.count(";") > first.count(","): return ";"
         return ","
-
 
 def to_int(x, default=0) -> int:
     try:
         s = str(x or "").strip()
-        if not s:
-            return default
+        if not s: return default
         return int(float(s.replace(",", ".")))
     except Exception:
         return default
-
 
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").split("_")
@@ -56,123 +51,87 @@ def supplier_from_sku(sku: str) -> str:
             return p
     return ""
 
-
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
-
 def clean_text(text: str) -> str:
     t = str(text or "")
-
     # rimuove HTML
     t = re.sub("<.*?>", " ", t)
-
-    # rimuove entità html
+    # rimuove entità HTML
     t = t.replace("&nbsp;", " ")
-
-    # rimuove caratteri che rompono il feed
+    # rimuove caratteri problematici
     t = t.replace('"', "")
     t = t.replace("|", " ")
-
-    # rimuove newline
     t = t.replace("\n", " ")
     t = t.replace("\r", " ")
-
     # spazi multipli
     t = re.sub(" +", " ", t)
-
     return t.strip()
 
+# -----------------------------
+# Main
+# -----------------------------
 def main():
-    print("Scarico feed...")
+    print("📥 Scarico feed originale...")
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
-
     text = resp.content.decode("utf-8-sig", errors="replace")
-
     f = io.StringIO(text)
-
     delim = detect_delim(text)
-
     reader = csv.DictReader(f, delimiter=delim)
 
     fields = [
-        "cat1",
-        "sku",
-        "ean",
-        "mpn",
-        "quantita",
-        "prezzo_iva_esclusa",
-        "titolo_prodotto",
-        "immagine_principale",
-        "descrizione_prodotto",
-        "costo_spedizione",
-        "cat2",
-        "cat3",
-        "marca",
-        "peso",
+        "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
+        "titolo_prodotto","immagine_principale","descrizione_prodotto",
+        "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
     rows_out = []
+    error_rows = []
 
-    for r in reader:
+    for i, r in enumerate(reader, 1):
+        try:
+            sku = r.get("sku") or r.get("SKU") or ""
+            supplier = supplier_from_sku(sku)
+            if supplier not in ALLOWED_SUPPLIERS:
+                continue
 
-        sku = r.get("sku") or r.get("SKU") or ""
-        supplier = supplier_from_sku(sku)
+            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+            if cat1 not in ALLOWED_CAT1:
+                continue
 
-        if supplier not in ALLOWED_SUPPLIERS:
-            continue
+            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+            if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+                continue
 
-        cat1 = norm(r.get("cat1") or r.get("categoria") or "")
-        if cat1 not in ALLOWED_CAT1:
-            continue
+            qty = to_int(r.get("quantita") or r.get("qty"))
+            if qty < MIN_QTY:
+                continue
 
-        titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
-        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
-            continue
+            row = {k: clean_text(r.get(k)) if k not in ["quantita"] else qty for k in fields}
+            rows_out.append(row)
+        except Exception as e:
+            error_rows.append((i, str(e)))
 
-        qty = to_int(r.get("quantita") or r.get("qty"))
-        if qty < MIN_QTY:
-            continue
+    if not rows_out:
+        raise Exception("❌ Feed vuoto dopo i filtri: upload bloccato!")
 
-        row = {
-            "cat1": clean_text(r.get("cat1")),
-            "sku": clean_text(sku),
-            "ean": clean_text(r.get("ean")),
-            "mpn": clean_text(r.get("mpn")),
-            "quantita": qty,
-            "prezzo_iva_esclusa": clean_text(r.get("prezzo_iva_esclusa")),
-            "titolo_prodotto": clean_text(r.get("titolo_prodotto")),
-            "immagine_principale": clean_text(r.get("immagine_principale")),
-            "descrizione_prodotto": clean_text(r.get("descrizione_prodotto")),
-            "costo_spedizione": clean_text(r.get("costo_spedizione")),
-            "cat2": clean_text(r.get("cat2")),
-            "cat3": clean_text(r.get("cat3")),
-            "marca": clean_text(r.get("marca")),
-            "peso": clean_text(r.get("peso")),
-        }
+    print(f"✅ Prodotti filtrati: {len(rows_out)}")
+    if error_rows:
+        print(f"⚠ Righe con errore: {len(error_rows)} (es. riga {error_rows[0][0]})")
 
-        rows_out.append(row)
-
-    print("Prodotti filtrati:", len(rows_out))
-
+    # Scrittura feed finale
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-
         writer = csv.DictWriter(
-            out,
-            fieldnames=fields,
-            delimiter="|",
-            quoting=csv.QUOTE_NONE,
-            escapechar="\\",
+            out, fieldnames=fields, delimiter="|",
+            quoting=csv.QUOTE_NONE, escapechar="\\"
         )
-
         writer.writeheader()
-
         for r in rows_out:
             writer.writerow(r)
 
-    print("Feed generato:", OUTPUT_FILE)
-
+    print(f"📝 Feed generato correttamente: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
