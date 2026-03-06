@@ -60,5 +60,6 @@ def main():
     f = io.StringIO(text)
 
     delim = detect_delim(text)
+# alla fine di process_and_upload.py
 with open("feed_poleepo.csv", "a", newline="") as f:
-    f.write("\n# test upload for workflow")
+    f.write("test-forced-upload-1234567890\n")
