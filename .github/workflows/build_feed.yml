@@ -15,49 +15,34 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
-          pip install requests
-          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+          pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      # crea la chiave google
+      - name: Create Google service account file
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
+
+      # valida json (debug utile)
+      - name: Validate JSON
+        run: |
+          python3 - << 'EOF'
+          import json
+          with open("sa.json") as f:
+              json.load(f)
+          print("Service account JSON valido")
+          EOF
 
       - name: Generate filtered feed
         run: python process_and_upload.py
-
-      - name: Prepare service account key
-        run: |
-          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT }}" > sa.json
-
-      - name: Validate service account JSON
-        run: |
-          echo "Validating sa.json..."
-          python3 - << 'EOF'
-          import json, sys
-
-          try:
-              with open("sa.json", "r") as f:
-                  data = json.load(f)
-          except Exception as e:
-              print("❌ ERRORE: sa.json non è un JSON valido.")
-              print("Dettagli:", e)
-              sys.exit(1)
-
-          required = ["type", "private_key", "client_email"]
-          missing = [k for k in required if k not in data]
-
-          if missing:
-              print("❌ ERRORE: Mancano campi obbligatori nel JSON:", missing)
-              sys.exit(1)
-
-          print("✅ sa.json valido e completo.")
-          EOF
 
       - name: Upload feed to Google Drive
         env:
@@ -69,5 +54,5 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add feed_poleepo.csv
-          git commit -m "Update feed" || echo "No changes to commit"
+          git commit -m "Update feed" || echo "No changes"
           git push
