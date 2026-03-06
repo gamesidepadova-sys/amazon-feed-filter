@@ -1,8 +1,8 @@
-name: Build Feed
+name: Build Feed (Force Upload)
 
 on:
   schedule:
-    - cron: "0 * * * *"   # ogni ora
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -17,19 +17,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Python senza caching
+      # 2️⃣ Setup Python
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
 
-      # 3️⃣ Installa dipendenze manualmente
+      # 3️⃣ Installa dipendenze
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      # 4️⃣ Crea service account JSON da Base64
+      # 4️⃣ Service account JSON
       - name: Prepare Google service account JSON
         run: |
           echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
@@ -49,31 +49,17 @@ jobs:
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # 7️⃣ Controlla se il feed è cambiato
-      - name: Check if feed changed
-        id: feed_check
-        run: |
-          git add feed_poleepo.csv
-          if git diff --cached --quiet; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "Nessun cambiamento nel feed"
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "Feed modificato, pronto per upload"
-          fi
-
-      # 8️⃣ Upload su Google Drive solo se cambia
-      - name: Upload feed to Google Drive
-        if: steps.feed_check.outputs.changed == 'true'
+      # 7️⃣ FORZA upload su Google Drive
+      - name: Upload feed to Google Drive (FORCED)
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
         run: python upload_to_drive.py
 
-      # 9️⃣ Commit solo se cambiato
-      - name: Commit feed changes
-        if: steps.feed_check.outputs.changed == 'true'
+      # 8️⃣ Commit feed changes (FORCED)
+      - name: Commit feed
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git commit -m "Update feed"
+          git add feed_poleepo.csv
+          git commit -m "Update feed (forced upload)" || echo "No changes to commit"
           git push
