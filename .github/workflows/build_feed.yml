@@ -1,8 +1,8 @@
-name: Build Feed (Optimized)
+name: Build Feed
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 * * * *"   # ogni ora
   workflow_dispatch:
 
 permissions:
@@ -13,34 +13,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Python con caching pip
+      # 2️⃣ Setup Python senza caching (nessun requirements.txt necessario)
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-          cache: "pip"
+          cache: "false"
 
-      # 3️⃣ Install dependencies solo se cambiano
+      # 3️⃣ Installa dipendenze manualmente
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      # 4️⃣ Creazione service account file solo se non esiste
-      - name: Prepare service account JSON
+      # 4️⃣ Crea service account JSON da Base64
+      - name: Prepare Google service account JSON
         run: |
-          if [ ! -f sa.json ]; then
-            echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
-            echo "✅ Service account JSON creato"
-          else
-            echo "Service account JSON già presente"
-          fi
+          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
+          echo "✅ Service account JSON pronto"
 
-      # 5️⃣ Validazione JSON (debug)
+      # 5️⃣ Validazione JSON
       - name: Validate service account JSON
         run: |
           python3 - << 'EOF'
@@ -50,7 +46,7 @@ jobs:
           print("✅ Service account JSON valido")
           EOF
 
-      # 6️⃣ Generazione feed
+      # 6️⃣ Genera feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
