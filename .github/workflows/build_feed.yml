@@ -1,8 +1,6 @@
-name: Build Feed (Force Upload)
+name: Build Feed (Force Upload Test)
 
 on:
-  schedule:
-    - cron: "0 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -49,7 +47,7 @@ jobs:
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # 7️⃣ FORZA upload su Google Drive
+      # 7️⃣ Upload forzato su Google Drive
       - name: Upload feed to Google Drive (FORCED)
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
