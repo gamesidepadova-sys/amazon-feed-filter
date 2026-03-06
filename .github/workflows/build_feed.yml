@@ -17,12 +17,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # 2️⃣ Setup Python senza caching (nessun requirements.txt necessario)
+      # 2️⃣ Setup Python senza caching
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-          cache: "false"
 
       # 3️⃣ Installa dipendenze manualmente
       - name: Install dependencies
