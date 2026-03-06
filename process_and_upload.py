@@ -70,16 +70,18 @@ def clean_text(text: str) -> str:
     # rimuove entità html
     t = t.replace("&nbsp;", " ")
 
-    # evita rottura CSV
+    # rimuove caratteri che rompono il feed
+    t = t.replace('"', "")
+    t = t.replace("|", " ")
+
+    # rimuove newline
     t = t.replace("\n", " ")
     t = t.replace("\r", " ")
-    t = t.replace("|", " ")
 
     # spazi multipli
     t = re.sub(" +", " ", t)
 
     return t.strip()
-
 
 def main():
     print("Scarico feed...")
