@@ -61,11 +61,22 @@ def norm(s: str) -> str:
 
 
 def clean_text(text: str) -> str:
-    """Rimuove newline e caratteri che rompono il CSV"""
     t = str(text or "")
+
+    # rimuove HTML
+    t = re.sub("<.*?>", " ", t)
+
+    # rimuove entità html
+    t = t.replace("&nbsp;", " ")
+
+    # evita rottura CSV
     t = t.replace("\n", " ")
     t = t.replace("\r", " ")
-    t = t.replace("|", " ")  # evita collisione con delimitatore
+    t = t.replace("|", " ")
+
+    # spazi multipli
+    t = re.sub(" +", " ", t)
+
     return t.strip()
 
 
