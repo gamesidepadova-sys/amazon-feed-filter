@@ -13,18 +13,22 @@ def main():
 
     service = build("drive", "v3", credentials=creds)
 
+    # FORZA un cambiamento per test
+    with open("feed_poleepo.csv", "a") as f:
+        f.write("\n# forced upload test\n")
+
     media = MediaFileUpload(
         "feed_poleepo.csv",
         mimetype="text/csv",
         resumable=False
     )
 
-    service.files().update(
+    print("Uploading feed_poleepo.csv to Drive...")
+    result = service.files().update(
         fileId=FILE_ID,
         media_body=media
     ).execute()
-
-    print("File aggiornato su Google Drive!")
+    print("Response from Drive API:", result)
 
 if __name__ == "__main__":
     main()
