@@ -1,6 +1,7 @@
 import csv
 import requests
 import io
+import re
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
