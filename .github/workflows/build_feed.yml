@@ -2,7 +2,7 @@ name: Build Feed
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 * * * *"   # ogni ora
   workflow_dispatch:
 
 permissions:
@@ -13,46 +13,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # 2️⃣ Setup Python (nessun errore caching)
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.12"
-          cache: "pip"
+          cache: "false"
 
+      # 3️⃣ Install dependencies manualmente
       - name: Install dependencies
         run: |
-          pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
+          pip install requests
+          pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      # crea la chiave google
+      # 4️⃣ Creazione service account file da Base64
       - name: Create Google service account file
         run: |
           echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
 
-      # valida json (debug utile)
-      - name: Validate JSON
+      # 5️⃣ Validazione JSON (debug)
+      - name: Validate service account JSON
         run: |
           python3 - << 'EOF'
           import json
           with open("sa.json") as f:
               json.load(f)
-          print("Service account JSON valido")
+          print("✅ Service account JSON valido")
           EOF
 
+      # 6️⃣ Generazione feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
+      # 7️⃣ Upload su Google Drive
       - name: Upload feed to Google Drive
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
         run: python upload_to_drive.py
 
+      # 8️⃣ Commit file solo se cambia
       - name: Commit filtered file
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add feed_poleepo.csv
-          git commit -m "Update feed" || echo "No changes"
+          git diff --cached --quiet || git commit -m "Update feed"
           git push
