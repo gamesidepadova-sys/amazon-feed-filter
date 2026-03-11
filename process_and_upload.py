@@ -42,6 +42,14 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
+def to_float(x, default=0.0) -> float:
+    try:
+        s = str(x or "").strip()
+        if not s: return default
+        return float(s.replace(",", "."))
+    except Exception:
+        return default
+
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").split("_")
     if len(parts) >= 2 and parts[1].isdigit():
@@ -66,34 +74,34 @@ def clean_text(text: str) -> str:
     return t.strip()
 
 # -----------------------------
-# Funzione scelta prodotto
+# Selezione prodotto per EAN
 # -----------------------------
 def choose_product(rows):
     if len(rows) == 1:
         return rows[0]
 
-    # ordinamento per prezzo crescente
+    # ordina per prezzo crescente
     rows_sorted = sorted(rows, key=lambda x: x["price"])
     lowest = rows_sorted[0]["price"]
     second_lowest = rows_sorted[1]["price"] if len(rows_sorted) > 1 else lowest
 
-    # 1️⃣ Priorità 0382
+    # 1️⃣ 0382 fallback europeo entro +3€
     for r in rows:
-        if r["supplier"] == "0382" and r["qty"] >= 16 and r["price"] == lowest:
+        if r["supplier"] == "0382" and r["qty"] >= 16 and r["price"] <= lowest + 3:
             return r
 
-    # 2️⃣ Priorità 0381
+    # 2️⃣ 0381 entro +5€
     for r in rows:
-        if r["supplier"] == "0381" and r["qty"] >= 16 and r["price"] == lowest:
+        if r["supplier"] == "0381" and r["qty"] >= 16 and r["price"] <= lowest + 5:
             return r
 
-    # 3️⃣ Priorità 0373 entro +20€ rispetto al secondo prezzo più basso
+    # 3️⃣ 0373 entro +20€ rispetto secondo prezzo più basso
     for r in rows:
         if r["supplier"] == "0373" and r["qty"] >= 16 and r["price"] <= second_lowest + 20:
             return r
 
-    # 4️⃣ 0372 o 0380 → prezzo più basso tra quelli con stock >=16
-    candidates = [r for r in rows if r["supplier"] in {"0372","0380"} and r["qty"] >= 16]
+    # 4️⃣ 0372 o 0380 entro +1€ rispetto prezzo minimo
+    candidates = [r for r in rows if r["supplier"] in {"0372","0380"} and r["qty"] >= 16 and r["price"] <= lowest + 1]
     if candidates:
         return sorted(candidates, key=lambda x: x["price"])[0]
 
@@ -101,8 +109,12 @@ def choose_product(rows):
     if len(rows) == 1 and rows[0]["supplier"] == "0383":
         return rows[0]
 
-    # fallback: prezzo più basso
-    return rows_sorted[0]
+    # fallback: prezzo più basso con stock sufficiente
+    for r in rows_sorted:
+        if r["qty"] >= 16:
+            return r
+
+    return rows_sorted[0]  # ultima scelta
 
 # -----------------------------
 # Main
@@ -144,7 +156,7 @@ def main():
             if qty < MIN_QTY:
                 continue
 
-            prezzo = float(str(r.get("prezzo_iva_esclusa") or "0").replace(",", "."))
+            prezzo = to_float(r.get("prezzo_iva_esclusa") or 0.0)
             ean = r.get("ean") or ""
 
             row = {
@@ -164,19 +176,21 @@ def main():
         raise Exception("❌ Feed vuoto dopo i filtri: upload bloccato!")
 
     rows_out = []
+
     for ean, rows in products_by_ean.items():
         chosen = choose_product(rows)
         if not chosen:
-            continue  # sicurezza, non scrivere nulla se non scelto
-
+            continue  # nessuna scelta valida
         r = chosen["raw"]
         row = {k: clean_text(r.get(k)) if k != "quantita" else chosen["qty"] for k in fields}
         rows_out.append(row)
 
+    print(f"📦 EAN totali: {len(products_by_ean)}")
     print(f"✅ Prodotti finali: {len(rows_out)}")
     if error_rows:
         print(f"⚠ Righe con errore: {len(error_rows)} (es. riga {error_rows[0][0]})")
 
+    # Scrittura feed finale compatibile Poleepo
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
             out, fieldnames=fields, delimiter="|",
@@ -190,20 +204,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# -----------------------------
-# TEST LOGICA EAN
-# -----------------------------
-def test_choose_ean():
-    rows = [
-        {"raw": {}, "sku": "SKU_0373_XYZ", "supplier": "0373", "qty": 30, "price": 73.05},
-        {"raw": {}, "sku": "SKU_0381_ABC", "supplier": "0381", "qty": 30, "price": 72.54},
-        {"raw": {}, "sku": "SKU_0380_DEF", "supplier": "0380", "qty": 42, "price": 72.50},
-    ]
-
-    chosen = choose_product(rows)
-    print("✅ SKU scelto per EAN 6933412728917:", chosen["sku"])
-    print("Fornitore:", chosen["supplier"], "Prezzo:", chosen["price"], "Giacenza:", chosen["qty"])
-
-if __name__ == "__main__":
-    test_choose_ean()
