@@ -12,7 +12,7 @@ ALLOWED_CAT1 = {"informatica","audio e tv","clima e brico","consumabili e uffici
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory","montatura"}
 MIN_QTY = 10
 MIN_OPTIMIZED_STOCK = 16
-MAX_PRICE_DIFF = 40  # per scartare prodotti troppo cari
+MAX_PRICE_DIFF = 40  # scarto prodotti troppo cari
 
 # -----------------------------
 # Funzioni di utilità
@@ -60,31 +60,32 @@ def choose_product(rows):
     if not rows: return None
     if len(rows) == 1: return rows[0]
 
+    # ordina per prezzo
     rows_sorted = sorted(rows, key=lambda x: x["price"])
     lowest = rows_sorted[0]["price"]
     second_lowest = rows_sorted[1]["price"] if len(rows_sorted) > 1 else lowest
 
-    # Rimuovi prodotti troppo cari
+    # filtra prodotti troppo cari e stock minimo
     rows = [r for r in rows if r["price"] <= lowest + MAX_PRICE_DIFF and r["qty"] >= MIN_OPTIMIZED_STOCK]
     if not rows: return None
 
-    # 1️⃣ Priorità 0382
+    # 1️⃣ Priorità 0373 fino a +20 € rispetto al secondo prezzo più basso
     for r in rows:
-        if r["supplier"] == "0382" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] == lowest:
+        if r["supplier"] == "0373" and r["price"] <= second_lowest + 20:
             return r
 
-    # 2️⃣ Priorità 0381
+    # 2️⃣ 0382 fallback europeo
     for r in rows:
-        if r["supplier"] == "0381" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] == lowest:
+        if r["supplier"] == "0382" and r["price"] == min(rw["price"] for rw in rows):
             return r
 
-    # 3️⃣ Priorità 0373 fino a +20€ rispetto al secondo prezzo più basso
+    # 3️⃣ 0381
     for r in rows:
-        if r["supplier"] == "0373" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] <= second_lowest + 20:
+        if r["supplier"] == "0381" and r["price"] == min(rw["price"] for rw in rows):
             return r
 
     # 4️⃣ 0372 o 0380 → prezzo più basso
-    candidates = [r for r in rows if r["supplier"] in {"0372","0380"} and r["qty"] >= MIN_OPTIMIZED_STOCK]
+    candidates = [r for r in rows if r["supplier"] in {"0372","0380"}]
     if candidates:
         return sorted(candidates, key=lambda x: x["price"])[0]
 
