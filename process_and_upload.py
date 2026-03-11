@@ -18,6 +18,8 @@ ALLOWED_CAT1 = {
 
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
+MIN_OPTIMIZED_STOCK = 16
+MAX_PRICE_DIFF = 40  # scarta prodotti troppo cari rispetto al minimo
 
 # -----------------------------
 # Funzioni di utilità
@@ -56,18 +58,68 @@ def norm(s: str) -> str:
 
 def clean_text(text: str) -> str:
     t = str(text or "")
-    # rimuove HTML
     t = re.sub("<.*?>", " ", t)
-    # rimuove entità HTML
     t = t.replace("&nbsp;", " ")
-    # rimuove caratteri problematici
     t = t.replace('"', "")
     t = t.replace("|", " ")
     t = t.replace("\n", " ")
     t = t.replace("\r", " ")
-    # spazi multipli
     t = re.sub(" +", " ", t)
     return t.strip()
+
+# -----------------------------
+# Funzione scelta prodotto migliore
+# -----------------------------
+def choose_product(rows):
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+
+    rows_sorted = sorted(rows, key=lambda x: x["price"])
+    lowest = rows_sorted[0]["price"]
+    second_lowest = rows_sorted[1]["price"] if len(rows_sorted) > 1 else lowest
+
+    # 1️⃣ 0382 fallback europeo
+    for r in rows:
+        if r["supplier"] == "0382" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] <= lowest + 3:
+            return r
+
+    # 2️⃣ 0381 competitivo
+    for r in rows:
+        if r["supplier"] == "0381" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] <= lowest + 5:
+            return r
+
+    # 3️⃣ 0373 vicino al prezzo
+    for r in rows:
+        if r["supplier"] == "0373" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] <= second_lowest + 10:
+            return r
+
+    # 4️⃣ 0372 o 0380 prezzo basso
+    candidates = [r for r in rows if r["supplier"] in {"0372", "0380"} and r["qty"] >= MIN_OPTIMIZED_STOCK]
+    if candidates:
+        return sorted(candidates, key=lambda x: x["price"])[0]
+
+    # 5️⃣ 0383 solo se unico
+    if len(rows) == 1 and rows[0]["supplier"] == "0383":
+        return rows[0]
+
+    # Ultima scelta: minore prezzo
+    chosen = rows_sorted[0]
+
+    # Evita prodotti troppo cari
+    min_price = min(r["price"] for r in rows)
+    if chosen["price"] > min_price + MAX_PRICE_DIFF:
+        return None
+
+    # Preferenza marche conosciute
+    if "marca" in chosen["raw"] and chosen["raw"].get("marca","").strip().upper() in {"ND",""}:
+        for r in rows:
+            marca = r["raw"].get("marca","").strip().upper()
+            if marca and marca != "ND":
+                return r
+
+    return chosen
 
 # -----------------------------
 # Main
@@ -87,7 +139,7 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
-    rows_out = []
+    products_by_ean = {}
     error_rows = []
 
     for i, r in enumerate(reader, 1):
@@ -109,19 +161,39 @@ def main():
             if qty < MIN_QTY:
                 continue
 
-            row = {k: clean_text(r.get(k)) if k not in ["quantita"] else qty for k in fields}
-            rows_out.append(row)
+            prezzo = float(str(r.get("prezzo_iva_esclusa") or "0").replace(",", "."))
+
+            ean = r.get("ean") or ""
+
+            row = {
+                "raw": r,
+                "sku": sku,
+                "supplier": supplier,
+                "qty": qty,
+                "price": prezzo
+            }
+
+            products_by_ean.setdefault(ean, []).append(row)
+
         except Exception as e:
             error_rows.append((i, str(e)))
 
-    if not rows_out:
+    if not products_by_ean:
         raise Exception("❌ Feed vuoto dopo i filtri: upload bloccato!")
 
-    print(f"✅ Prodotti filtrati: {len(rows_out)}")
+    rows_out = []
+    for ean, rows in products_by_ean.items():
+        chosen = choose_product(rows)
+        if not chosen:
+            continue
+        r = chosen["raw"]
+        row = {k: clean_text(r.get(k)) if k != "quantita" else chosen["qty"] for k in fields}
+        rows_out.append(row)
+
+    print(f"✅ Prodotti finali: {len(rows_out)} / EAN totali: {len(products_by_ean)}")
     if error_rows:
         print(f"⚠ Righe con errore: {len(error_rows)} (es. riga {error_rows[0][0]})")
 
-    # Scrittura feed finale
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
             out, fieldnames=fields, delimiter="|",
@@ -132,6 +204,7 @@ def main():
             writer.writerow(r)
 
     print(f"📝 Feed generato correttamente: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
