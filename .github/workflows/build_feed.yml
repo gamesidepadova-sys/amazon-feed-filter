@@ -3,7 +3,7 @@ name: Build Feed (Force Upload Definitivo)
 on:
   schedule:
     - cron: "*/30 * * * *"  # ogni 30 minuti
-  workflow_dispatch:         # permette anche run manuale
+  workflow_dispatch:         # permette run manuale
 
 permissions:
   contents: write
@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      # 3️⃣ Installa dipendenze
+      # 3️⃣ Installa dipendenze Python
       - name: Install dependencies
         run: |
           pip install --upgrade pip
@@ -49,7 +49,7 @@ jobs:
           print("✅ Service account JSON valido")
           EOF
 
-      # 6️⃣ Genera feed
+      # 6️⃣ Genera feed filtrato
       - name: Generate filtered feed
         run: python process_and_upload.py
 
