@@ -1,88 +1,151 @@
-name: Build Feed (Force Upload Definitivo)
+import csv
+import requests
+import io
+import re
+from collections import defaultdict
 
-on:
-  schedule:
-    - cron: "*/30 * * * *"  # ogni 30 minuti
-  workflow_dispatch:         # permette anche run manuale
+INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
+OUTPUT_FILE = "feed_poleepo.csv"
 
-permissions:
-  contents: write
+ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
+ALLOWED_CAT1 = {"informatica","audio e tv","clima e brico","consumabili e ufficio","salute, beauty e fitness"}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory","montatura"}
+MIN_QTY = 10
+MIN_OPTIMIZED_STOCK = 16
+MAX_PRICE_DIFF = 40
+PRICE_SIMILARITY_THRESHOLD = 0.02  # 2 cent per considerare prezzi quasi uguali
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+# -----------------------------
+# Funzioni di utilità
+# -----------------------------
+def detect_delim(text: str) -> str:
+    try:
+        d = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+        return d.delimiter
+    except Exception:
+        first = text.splitlines()[0] if text else ""
+        if "\t" in first: return "\t"
+        if "|" in first: return "|"
+        if ";" in first and first.count(";") > first.count(","): return ";"
+        return ","
 
-    # ✅ Forza Node.js 24 per tutte le Actions
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+def to_int(x, default=0) -> int:
+    try:
+        s = str(x or "").strip()
+        if not s: return default
+        return int(float(s.replace(",", ".")))
+    except Exception:
+        return default
 
-    steps:
-      # 1️⃣ Checkout repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+def supplier_from_sku(sku: str) -> str:
+    parts = (sku or "").split("_")
+    for p in parts:
+        if len(p) == 4 and p.isdigit():
+            return p
+    return ""
 
-      # 2️⃣ Setup Python
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.12"
+def norm(s: str) -> str:
+    return str(s or "").strip().lower()
 
-      # 3️⃣ Installa dipendenze
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
+def clean_text(text: str) -> str:
+    t = str(text or "")
+    t = re.sub("<.*?>", " ", t)
+    t = t.replace("&nbsp;", " ").replace('"', "").replace("|"," ").replace("\n"," ").replace("\r"," ")
+    t = re.sub(" +", " ", t)
+    return t.strip()
 
-      # 4️⃣ Service account JSON
-      - name: Prepare Google service account JSON
-        run: |
-          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
-          echo "✅ Service account JSON pronto"
+# -----------------------------
+# Funzione scelta prodotto migliore
+# -----------------------------
+def choose_product(rows):
+    if not rows: return None
+    if len(rows) == 1: return rows[0]
 
-      # 5️⃣ Validazione JSON
-      - name: Validate service account JSON
-        run: |
-          python3 - << 'EOF'
-          import json
-          with open("sa.json") as f:
-              json.load(f)
-          print("✅ Service account JSON valido")
-          EOF
+    rows_sorted = sorted(rows, key=lambda x: x["price"])
+    min_price = rows_sorted[0]["price"]
 
-      # 6️⃣ Genera feed
-      - name: Generate filtered feed
-        run: python process_and_upload.py
+    # Rimuovi SKU troppo cari
+    rows = [r for r in rows if r["price"] <= min_price + MAX_PRICE_DIFF and r["qty"] >= MIN_OPTIMIZED_STOCK]
+    if not rows: return None
 
-      # 7️⃣ Upload forzato su Google Drive
-      - name: Upload feed to Google Drive (FORCED)
-        env:
-          FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
-        run: |
-          python3 - << 'EOF'
-          from google.oauth2 import service_account
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-          import os
+    # Raggruppa prezzi simili per considerare SKU quasi uguali
+    price_groups = defaultdict(list)
+    for r in rows:
+        key = round(r["price"],2)  # arrotonda a centesimi
+        price_groups[key].append(r)
+    lowest_group = price_groups[min(price_groups.keys())]
 
-          FILE_ID = os.environ["FILE_ID"]
+    # Priorità dinamica fornitori
+    for sup in ["0382","0372","0380","0381","0373"]:
+        candidates = [r for r in lowest_group if r["supplier"] == sup]
+        if candidates:
+            # Preferisce marche conosciute
+            known = [r for r in candidates if r["raw"].get("marca","").strip().upper() not in {"ND",""}]
+            return known[0] if known else candidates[0]
 
-          creds = service_account.Credentials.from_service_account_file(
-              "sa.json",
-              scopes=["https://www.googleapis.com/auth/drive"]
-          )
-          service = build("drive", "v3", credentials=creds)
+    # fallback ultima scelta
+    return lowest_group[0]
 
-          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
-          print("Uploading feed_poleepo.csv to Drive...")
-          result = service.files().update(fileId=FILE_ID, media_body=media).execute()
-          print("Response from Drive API:", result)
-          EOF
+# -----------------------------
+# Main
+# -----------------------------
+def main():
+    print("📥 Scarico feed originale...")
+    resp = requests.get(INPUT_URL)
+    resp.raise_for_status()
+    text = resp.content.decode("utf-8-sig", errors="replace")
+    delim = detect_delim(text)
+    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
 
-      # 8️⃣ Commit feed changes (FORCED)
-      - name: Commit feed
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add feed_poleepo.csv
-          git commit -m "Update feed (forced upload)" || echo "No changes to commit"
-          git push
+    fields = ["cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
+              "titolo_prodotto","immagine_principale","descrizione_prodotto",
+              "costo_spedizione","cat2","cat3","marca","peso"]
+
+    products_by_ean = defaultdict(list)
+    error_rows = []
+
+    for i, r in enumerate(reader,1):
+        try:
+            sku = r.get("sku") or r.get("SKU") or ""
+            supplier = supplier_from_sku(sku)
+            if supplier not in ALLOWED_SUPPLIERS: continue
+
+            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+            if cat1 not in ALLOWED_CAT1: continue
+
+            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+            if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS): continue
+
+            qty = to_int(r.get("quantita") or r.get("qty"))
+            if qty < MIN_QTY: continue
+
+            prezzo = float(str(r.get("prezzo_iva_esclusa") or "0").replace(",", "."))
+            ean = r.get("ean") or ""
+
+            products_by_ean[ean].append({"raw": r,"sku":sku,"supplier":supplier,"qty":qty,"price":prezzo})
+        except Exception as e:
+            error_rows.append((i,str(e)))
+
+    if not products_by_ean: raise Exception("❌ Feed vuoto dopo filtri!")
+
+    rows_out = []
+    for ean, rows in products_by_ean.items():
+        chosen = choose_product(rows)
+        if not chosen: continue
+        r = chosen["raw"]
+        row = {k: clean_text(r.get(k)) if k != "quantita" else chosen["qty"] for k in fields}
+        rows_out.append(row)
+
+    print(f"✅ Prodotti finali: {len(rows_out)} / EAN totali: {len(products_by_ean)}")
+    if error_rows: print(f"⚠ Righe con errore: {len(error_rows)} (es. riga {error_rows[0][0]})")
+
+    with open(OUTPUT_FILE,"w",encoding="utf-8",newline="") as out:
+        writer = csv.DictWriter(out, fieldnames=fields, delimiter="|", quoting=csv.QUOTE_NONE, escapechar="\\")
+        writer.writeheader()
+        for r in rows_out:
+            writer.writerow(r)
+
+    print(f"📝 Feed ottimizzato generato: {OUTPUT_FILE}")
+
+if __name__ == "__main__":
+    main()
