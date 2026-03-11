@@ -2,11 +2,12 @@ import csv
 import requests
 import io
 import re
+import os
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
-ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
+ALLOWED_SUPPLIERS = {"0372","0373","0374","0380","0381","0382","0383"}
 
 ALLOWED_CAT1 = {
     "informatica",
@@ -16,122 +17,153 @@ ALLOWED_CAT1 = {
     "salute, beauty e fitness",
 }
 
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory","montatura"}
 
 MIN_QTY = 10
 MIN_QTY_PRIORITY = 16
+STABILITY_PRICE_DELTA = 1.0
+
 
 # -----------------------------
-# Funzioni utilità
+# Utility
 # -----------------------------
 
-def detect_delim(text: str) -> str:
+def detect_delim(text):
     try:
         sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
-    except Exception:
-        first = text.splitlines()[0] if text else ""
+    except:
+        first = text.splitlines()[0]
         if "\t" in first: return "\t"
         if "|" in first: return "|"
-        if ";" in first and first.count(";") > first.count(","): return ";"
+        if ";" in first: return ";"
         return ","
 
 
 def to_int(x, default=0):
     try:
-        s = str(x or "").strip()
+        s=str(x or "").strip()
         if not s:
             return default
-        return int(float(s.replace(",", ".")))
+        return int(float(s.replace(",",".")))
     except:
         return default
 
 
 def to_price(x, default=999999):
+
     try:
-        s = str(x or "").strip()
+        s=str(x or "").strip()
+
         if not s:
             return default
-        s = s.replace("€", "")
-        s = s.replace(",", ".")
-        s = re.sub(r"[^0-9.]", "", s)
+
+        s=s.replace("€","")
+        s=s.replace(",",".")
+        s=re.sub(r"[^0-9.]", "", s)
+
         return float(s)
+
     except:
         return default
 
 
-def supplier_from_sku(sku: str) -> str:
-    parts = (sku or "").split("_")
-    if len(parts) >= 2 and parts[1].isdigit():
+def supplier_from_sku(sku):
+
+    parts=(sku or "").split("_")
+
+    if len(parts)>=2 and parts[1].isdigit():
         return parts[1]
+
     for p in parts:
-        if len(p) == 4 and p.isdigit():
+        if len(p)==4 and p.isdigit():
             return p
+
     return ""
 
 
-def norm(s: str) -> str:
+def norm(s):
     return str(s or "").strip().lower()
 
 
-def clean_text(text: str) -> str:
-    t = str(text or "")
-    t = re.sub("<.*?>", " ", t)
-    t = t.replace("&nbsp;", " ")
-    t = t.replace('"', "")
-    t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
-    t = re.sub(" +", " ", t)
+def clean_text(text):
+
+    t=str(text or "")
+
+    t=re.sub("<.*?>"," ",t)
+    t=t.replace("&nbsp;"," ")
+    t=t.replace('"',"")
+    t=t.replace("|"," ")
+    t=t.replace("\n"," ")
+    t=t.replace("\r"," ")
+
+    t=re.sub(" +"," ",t)
+
     return t.strip()
 
+
 # -----------------------------
-# Selezione SKU migliore
+# Leggi feed precedente
+# -----------------------------
+
+def load_previous_feed():
+
+    previous={}
+
+    if not os.path.exists(OUTPUT_FILE):
+        return previous
+
+    with open(OUTPUT_FILE,encoding="utf-8") as f:
+
+        reader=csv.DictReader(f,delimiter="|")
+
+        for r in reader:
+
+            previous[r["ean"]] = {
+                "sku": r["sku"],
+                "price": to_price(r.get("prezzo_iva_esclusa"))
+            }
+
+    return previous
+
+
+# -----------------------------
+# Scelta SKU
 # -----------------------------
 
 def choose_product(rows):
 
-    if len(rows) == 1:
+    if len(rows)==1:
         return rows[0]
 
-    rows_sorted = sorted(rows, key=lambda x: x["price"])
-    min_price = rows_sorted[0]["price"]
+    rows_sorted=sorted(rows,key=lambda x:x["price"])
 
-    # 1️⃣ preferisci 0373 se entro +20€
+    min_price=rows_sorted[0]["price"]
+
+    # 0373 entro +20€
     for r in rows:
-        if (
-            r["supplier"] == "0373"
-            and r["qty"] >= MIN_QTY_PRIORITY
-            and r["price"] <= min_price + 20
-        ):
+        if r["supplier"]=="0373" and r["qty"]>=MIN_QTY_PRIORITY and r["price"]<=min_price+20:
             return r
 
-    # 2️⃣ 0382 prezzo minimo
+    # 0382 minimo
     for r in rows:
-        if r["supplier"] == "0382" and r["qty"] >= MIN_QTY_PRIORITY and r["price"] == min_price:
+        if r["supplier"]=="0382" and r["qty"]>=MIN_QTY_PRIORITY and r["price"]==min_price:
             return r
 
-    # 3️⃣ 0381 prezzo minimo
+    # 0381 minimo
     for r in rows:
-        if r["supplier"] == "0381" and r["qty"] >= MIN_QTY_PRIORITY and r["price"] == min_price:
+        if r["supplier"]=="0381" and r["qty"]>=MIN_QTY_PRIORITY and r["price"]==min_price:
             return r
 
-    # 4️⃣ tra 0372 e 0380 scegli il più economico
-    candidates = [
-        r for r in rows
-        if r["supplier"] in {"0372", "0380"} and r["qty"] >= MIN_QTY_PRIORITY
-    ]
+    # 0372 / 0380
+    candidates=[r for r in rows if r["supplier"] in {"0372","0380"} and r["qty"]>=MIN_QTY_PRIORITY]
 
     if candidates:
-        return sorted(candidates, key=lambda x: x["price"])[0]
+        return sorted(candidates,key=lambda x:x["price"])[0]
 
-    # 5️⃣ 0383 solo se unico
-    if len(rows) == 1 and rows[0]["supplier"] == "0383":
-        return rows[0]
-
-    # fallback sicuro
     return rows_sorted[0]
+
 
 # -----------------------------
 # MAIN
@@ -139,95 +171,106 @@ def choose_product(rows):
 
 def main():
 
-    print("📥 Scarico feed originale...")
+    previous_feed = load_previous_feed()
 
-    resp = requests.get(INPUT_URL)
+    print("Feed precedente caricato:",len(previous_feed))
+
+    print("Scarico feed originale...")
+
+    resp=requests.get(INPUT_URL)
     resp.raise_for_status()
 
-    text = resp.content.decode("utf-8-sig", errors="replace")
-    f = io.StringIO(text)
+    text=resp.content.decode("utf-8-sig",errors="replace")
 
-    delim = detect_delim(text)
+    f=io.StringIO(text)
 
-    reader = csv.DictReader(f, delimiter=delim)
+    delim=detect_delim(text)
 
-    fields = [
+    reader=csv.DictReader(f,delimiter=delim)
+
+    fields=[
         "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
         "titolo_prodotto","immagine_principale","descrizione_prodotto",
         "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
-    products_by_ean = {}
-    error_rows = []
+    products_by_ean={}
 
-    for i, r in enumerate(reader, 1):
+    for r in reader:
 
-        try:
+        sku=r.get("sku") or r.get("SKU") or ""
 
-            sku = r.get("sku") or r.get("SKU") or ""
-            supplier = supplier_from_sku(sku)
+        supplier=supplier_from_sku(sku)
 
-            if supplier not in ALLOWED_SUPPLIERS:
-                continue
-
-            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
-            if cat1 not in ALLOWED_CAT1:
-                continue
-
-            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
-            if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
-                continue
-
-            qty = to_int(r.get("quantita") or r.get("qty"))
-
-            if qty < MIN_QTY:
-                continue
-
-            price = to_price(r.get("prezzo_iva_esclusa"))
-
-            ean = r.get("ean") or ""
-
-            row = {
-                "raw": r,
-                "supplier": supplier,
-                "qty": qty,
-                "price": price
-            }
-
-            products_by_ean.setdefault(ean, []).append(row)
-
-        except Exception as e:
-            error_rows.append((i, str(e)))
-
-    print("EAN analizzati:", len(products_by_ean))
-
-    rows_out = []
-
-    for ean, rows in products_by_ean.items():
-
-        chosen = choose_product(rows)
-
-        if not chosen:
+        if supplier not in ALLOWED_SUPPLIERS:
             continue
 
-        r = chosen["raw"]
+        cat1=norm(r.get("cat1") or r.get("categoria"))
 
-        row = {
-            k: clean_text(r.get(k)) if k != "quantita"
-            else chosen["qty"]
-            for k in fields
+        if cat1 not in ALLOWED_CAT1:
+            continue
+
+        titolo=norm(r.get("titolo_prodotto") or r.get("nome"))
+
+        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+            continue
+
+        qty=to_int(r.get("quantita") or r.get("qty"))
+
+        if qty<MIN_QTY:
+            continue
+
+        price=to_price(r.get("prezzo_iva_esclusa"))
+
+        ean=r.get("ean") or ""
+
+        row={
+            "raw":r,
+            "sku":sku,
+            "supplier":supplier,
+            "qty":qty,
+            "price":price
         }
+
+        products_by_ean.setdefault(ean,[]).append(row)
+
+
+    print("EAN analizzati:",len(products_by_ean))
+
+    rows_out=[]
+
+    for ean,rows in products_by_ean.items():
+
+        chosen=choose_product(rows)
+
+        prev=previous_feed.get(ean)
+
+        # stabilizzazione
+        if prev:
+
+            for r in rows:
+
+                if r["sku"]==prev["sku"]:
+
+                    if abs(r["price"]-chosen["price"])<STABILITY_PRICE_DELTA and r["qty"]>=MIN_QTY_PRIORITY:
+
+                        chosen=r
+                        break
+
+
+        r=chosen["raw"]
+
+        row={k: clean_text(r.get(k)) if k!="quantita" else chosen["qty"] for k in fields}
 
         rows_out.append(row)
 
-    if not rows_out:
-        raise Exception("❌ Feed vuoto dopo i filtri")
 
-    print("Prodotti finali:", len(rows_out))
+    print("Prodotti finali:",len(rows_out))
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
 
-        writer = csv.DictWriter(
+    with open(OUTPUT_FILE,"w",encoding="utf-8",newline="") as out:
+
+        writer=csv.DictWriter(
             out,
             fieldnames=fields,
             delimiter="|",
@@ -240,11 +283,9 @@ def main():
         for r in rows_out:
             writer.writerow(r)
 
-    print("📝 Feed generato:", OUTPUT_FILE)
 
-    if error_rows:
-        print("⚠ Errori righe:", len(error_rows))
+    print("Feed generato:",OUTPUT_FILE)
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
