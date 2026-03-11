@@ -1,9 +1,12 @@
 name: Build Feed (Force Upload Definitivo)
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   schedule:
-    - cron: "*/30 * * * *"  # ogni 30 minuti
-  workflow_dispatch:         # permette run manuale
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,49 +15,37 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # ✅ Forza Node.js 24 per tutte le Actions
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
-      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # 3️⃣ Installa dipendenze Python
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
-      # 4️⃣ Service account JSON
       - name: Prepare Google service account JSON
         run: |
           echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
-          echo "✅ Service account JSON pronto"
 
-      # 5️⃣ Validazione JSON
       - name: Validate service account JSON
         run: |
           python3 - << 'EOF'
           import json
           with open("sa.json") as f:
               json.load(f)
-          print("✅ Service account JSON valido")
+          print("Service account JSON valido")
           EOF
 
-      # 6️⃣ Genera feed filtrato
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # 7️⃣ Upload forzato su Google Drive
-      - name: Upload feed to Google Drive (FORCED)
+      - name: Upload feed to Google Drive
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
         run: |
@@ -70,19 +61,23 @@ jobs:
               "sa.json",
               scopes=["https://www.googleapis.com/auth/drive"]
           )
+
           service = build("drive", "v3", credentials=creds)
 
-          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
-          print("Uploading feed_poleepo.csv to Drive...")
-          result = service.files().update(fileId=FILE_ID, media_body=media).execute()
-          print("Response from Drive API:", result)
+          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv")
+
+          service.files().update(
+              fileId=FILE_ID,
+              media_body=media
+          ).execute()
+
+          print("File aggiornato su Google Drive")
           EOF
 
-      # 8️⃣ Commit feed changes (FORCED)
       - name: Commit feed
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add feed_poleepo.csv
-          git commit -m "Update feed (forced upload)" || echo "No changes to commit"
+          git commit -m "Update feed" || echo "No changes"
           git push
