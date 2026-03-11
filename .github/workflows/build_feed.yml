@@ -1,11 +1,12 @@
 name: Build Feed (Force Upload Definitivo)
 
 env:
+  # forza Node.js 24 per tutte le Actions
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/30 * * * *"  # ogni 30 minuti
   workflow_dispatch:
 
 permissions:
@@ -16,36 +17,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # 3️⃣ Installa dipendenze
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
+      # 4️⃣ Service account JSON
       - name: Prepare Google service account JSON
         run: |
           echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
+          echo "✅ Service account JSON pronto"
 
+      # 5️⃣ Validazione JSON
       - name: Validate service account JSON
         run: |
           python3 - << 'EOF'
           import json
           with open("sa.json") as f:
               json.load(f)
-          print("Service account JSON valido")
+          print("✅ Service account JSON valido")
           EOF
 
+      # 6️⃣ Genera feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
+      # 7️⃣ Controllo se il feed è cambiato
+      - name: Check if feed changed
+        id: feedcheck
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          if git diff --quiet feed_poleepo.csv; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      # 8️⃣ Upload su Google Drive solo se cambiato
       - name: Upload feed to Google Drive
+        if: steps.feedcheck.outputs.changed == 'true'
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
         run: |
@@ -64,20 +85,17 @@ jobs:
 
           service = build("drive", "v3", credentials=creds)
 
-          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv")
-
-          service.files().update(
-              fileId=FILE_ID,
-              media_body=media
-          ).execute()
-
-          print("File aggiornato su Google Drive")
+          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
+          service.files().update(fileId=FILE_ID, media_body=media).execute()
+          print("✅ File aggiornato su Google Drive")
           EOF
 
-      - name: Commit feed
+      # 9️⃣ Commit feed solo se cambiato
+      - name: Commit feed only if changed
+        if: steps.feedcheck.outputs.changed == 'true'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add feed_poleepo.csv
-          git commit -m "Update feed" || echo "No changes"
+          git commit -m "Update feed" || echo "✅ Nessuna modifica da commit"
           git push
