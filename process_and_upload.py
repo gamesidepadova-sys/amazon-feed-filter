@@ -12,8 +12,7 @@ ALLOWED_CAT1 = {"informatica","audio e tv","clima e brico","consumabili e uffici
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory","montatura"}
 MIN_QTY = 10
 MIN_OPTIMIZED_STOCK = 16
-MAX_PRICE_DIFF = 40
-PRICE_SIMILARITY_THRESHOLD = 0.02  # 2 cent per considerare prezzi quasi uguali
+MAX_PRICE_DIFF = 40  # per scartare prodotti troppo cari
 
 # -----------------------------
 # Funzioni di utilità
@@ -62,29 +61,39 @@ def choose_product(rows):
     if len(rows) == 1: return rows[0]
 
     rows_sorted = sorted(rows, key=lambda x: x["price"])
-    min_price = rows_sorted[0]["price"]
+    lowest = rows_sorted[0]["price"]
+    second_lowest = rows_sorted[1]["price"] if len(rows_sorted) > 1 else lowest
 
-    # Rimuovi SKU troppo cari
-    rows = [r for r in rows if r["price"] <= min_price + MAX_PRICE_DIFF and r["qty"] >= MIN_OPTIMIZED_STOCK]
+    # Rimuovi prodotti troppo cari
+    rows = [r for r in rows if r["price"] <= lowest + MAX_PRICE_DIFF and r["qty"] >= MIN_OPTIMIZED_STOCK]
     if not rows: return None
 
-    # Raggruppa prezzi simili per considerare SKU quasi uguali
-    price_groups = defaultdict(list)
+    # 1️⃣ Priorità 0382
     for r in rows:
-        key = round(r["price"],2)  # arrotonda a centesimi
-        price_groups[key].append(r)
-    lowest_group = price_groups[min(price_groups.keys())]
+        if r["supplier"] == "0382" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] == lowest:
+            return r
 
-    # Priorità dinamica fornitori
-    for sup in ["0382","0372","0380","0381","0373"]:
-        candidates = [r for r in lowest_group if r["supplier"] == sup]
-        if candidates:
-            # Preferisce marche conosciute
-            known = [r for r in candidates if r["raw"].get("marca","").strip().upper() not in {"ND",""}]
-            return known[0] if known else candidates[0]
+    # 2️⃣ Priorità 0381
+    for r in rows:
+        if r["supplier"] == "0381" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] == lowest:
+            return r
+
+    # 3️⃣ Priorità 0373 fino a +20€ rispetto al secondo prezzo più basso
+    for r in rows:
+        if r["supplier"] == "0373" and r["qty"] >= MIN_OPTIMIZED_STOCK and r["price"] <= second_lowest + 20:
+            return r
+
+    # 4️⃣ 0372 o 0380 → prezzo più basso
+    candidates = [r for r in rows if r["supplier"] in {"0372","0380"} and r["qty"] >= MIN_OPTIMIZED_STOCK]
+    if candidates:
+        return sorted(candidates, key=lambda x: x["price"])[0]
+
+    # 5️⃣ 0383 solo se unico
+    if len(rows) == 1 and rows[0]["supplier"] == "0383":
+        return rows[0]
 
     # fallback ultima scelta
-    return lowest_group[0]
+    return rows_sorted[0]
 
 # -----------------------------
 # Main
