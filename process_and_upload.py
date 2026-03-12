@@ -146,20 +146,29 @@ def main():
     rows_out = []
 
     # -----------------------------
-    # Mantieni SKU storico e aggiorna quantità/prezzo
+    # Aggiornamento logica SKU con duplicazione solo se serve
     # -----------------------------
     for ean, items in ean_dict.items():
-        # Manteniamo sempre lo SKU storico del feed
-        chosen = items[0]  # Primo elemento per lo SKU storico
-        active_row = {k: v for k, v in chosen.items() if k not in ["_supplier","_price_num","_sku_orig"]}
+        sku_storico = items[0]
+        supplier_storico = sku_storico["_supplier"]
 
-        # Ripristiniamo SKU storico
-        active_row["sku"] = chosen["_sku_orig"]
+        # Trova il prezzo migliore
+        best_item = min(items, key=lambda x: x["_price_num"])
+        best_supplier = best_item["_supplier"]
 
-        # Tag per filtraggio in Poleepo
-        active_row["tag"] = f"{chosen['_supplier']},{active_row.get('cat1','')},{active_row.get('marca','')}"
-
+        # 1️⃣ Aggiorna sempre lo SKU storico
+        active_row = {k: v for k, v in sku_storico.items() if k not in ["_supplier","_price_num","_sku_orig"]}
+        active_row["sku"] = sku_storico["_sku_orig"]
+        # Tag solo per categoria/marca
+        active_row["tag"] = f"{active_row.get('cat1','')},{active_row.get('marca','')}"
         rows_out.append(active_row)
+
+        # 2️⃣ Se il prezzo migliore è di un altro fornitore, creiamo un nuovo SKU
+        if best_supplier != supplier_storico:
+            new_row = {k: v for k, v in best_item.items() if k not in ["_supplier","_price_num","_sku_orig"]}
+            new_row["sku"] = f"{best_supplier}_{best_item['_sku_orig']}"
+            new_row["tag"] = f"{new_row.get('cat1','')},{new_row.get('marca','')}"
+            rows_out.append(new_row)
 
     # -----------------------------
     # Scrittura CSV finale
