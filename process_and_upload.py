@@ -2,6 +2,7 @@ import csv
 import requests
 import io
 import re
+from collections import defaultdict
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
@@ -18,7 +19,6 @@ ALLOWED_CAT1 = {
 
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
-PREF_0373_DELTA = 20  # € massimo in più per preferire 0373
 
 # -----------------------------
 # Funzioni di utilità
@@ -45,8 +45,9 @@ def to_int(x, default=0) -> int:
 
 def to_float(x, default=0.0) -> float:
     try:
-        s = str(x or "").strip().replace(",", ".")
-        return float(s) if s else default
+        s = str(x or "").strip()
+        if not s: return default
+        return float(s.replace(",", "."))
     except Exception:
         return default
 
@@ -91,7 +92,9 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
-    ean_dict = {}  # deduplica per EAN con preferenza 0373
+    # Raggruppa righe per EAN
+    ean_dict = defaultdict(list)
+    error_rows = []
 
     for i, r in enumerate(reader, 1):
         try:
@@ -113,30 +116,32 @@ def main():
                 continue
 
             prezzo = to_float(r.get("prezzo_iva_esclusa"))
-
             row = {k: clean_text(r.get(k)) if k not in ["quantita","prezzo_iva_esclusa"] else (qty if k=="quantita" else prezzo) for k in fields}
-
-            ean = row["ean"]
-            if ean in ean_dict:
-                # confronto con regola 0373
-                existing = ean_dict[ean]
-                # preferenza 0373 se entro delta
-                if supplier == "0373" and (prezzo <= existing["prezzo_iva_esclusa"] + PREF_0373_DELTA):
-                    ean_dict[ean] = row
-                # altrimenti scegli prezzo più basso
-                elif prezzo < existing["prezzo_iva_esclusa"]:
-                    ean_dict[ean] = row
-            else:
-                ean_dict[ean] = row
+            row["_supplier"] = supplier  # per regola 0373
+            ean_dict[row["ean"]].append(row)
         except Exception as e:
-            print(f"⚠ Riga {i} errore: {e}")
+            error_rows.append((i, str(e)))
 
-    rows_out = list(ean_dict.values())
-
-    if not rows_out:
+    if not ean_dict:
         raise Exception("❌ Feed vuoto dopo i filtri: upload bloccato!")
 
-    print(f"✅ Prodotti filtrati e deduplicati: {len(rows_out)}")
+    print(f"✅ Prodotti filtrati per EAN: {len(ean_dict)}")
+    if error_rows:
+        print(f"⚠ Righe con errore: {len(error_rows)} (es. riga {error_rows[0][0]})")
+
+    # Seleziona il prezzo migliore per EAN con regola 0373
+    rows_out = []
+    for ean, items in ean_dict.items():
+        chosen = None
+        # Trova tutti con supplier 0373
+        preferred = [x for x in items if x["_supplier"] == "0373"]
+        if preferred:
+            # Prendi quello con prezzo più basso tra 0373
+            chosen = min(preferred, key=lambda x: x["prezzo_iva_esclusa"])
+        else:
+            # Prendi prezzo minimo tra tutti
+            chosen = min(items, key=lambda x: x["prezzo_iva_esclusa"])
+        rows_out.append({k:v for k,v in chosen.items() if k!="_supplier"})
 
     # Scrittura feed finale
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
@@ -146,11 +151,7 @@ def main():
         )
         writer.writeheader()
         for r in rows_out:
-            # scrittura sicura: quantità come int, prezzo come float con 2 decimali
-            r_out = r.copy()
-            r_out["quantita"] = int(r_out["quantita"])
-            r_out["prezzo_iva_esclusa"] = f"{float(r_out['prezzo_iva_esclusa']):.2f}"
-            writer.writerow(r_out)
+            writer.writerow(r)
 
     print(f"📝 Feed generato correttamente: {OUTPUT_FILE}")
 
