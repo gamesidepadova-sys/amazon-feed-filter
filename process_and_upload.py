@@ -19,6 +19,11 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 
 # -----------------------------
+# EAN di test
+# -----------------------------
+EAN_TEST = "6933412728917"  # sostituire con l'EAN da testare
+
+# -----------------------------
 # Utility
 # -----------------------------
 def detect_delim(text: str) -> str:
@@ -146,29 +151,24 @@ def main():
     rows_out = []
 
     # -----------------------------
-    # Aggiornamento logica SKU con duplicazione solo se serve
+    # Generazione feed finale
     # -----------------------------
     for ean, items in ean_dict.items():
-        sku_storico = items[0]
-        supplier_storico = sku_storico["_supplier"]
-
-        # Trova il prezzo migliore
+        # scegli SKU con prezzo più basso
         best_item = min(items, key=lambda x: x["_price_num"])
-        best_supplier = best_item["_supplier"]
 
-        # 1️⃣ Aggiorna sempre lo SKU storico
-        active_row = {k: v for k, v in sku_storico.items() if k not in ["_supplier","_price_num","_sku_orig"]}
-        active_row["sku"] = sku_storico["_sku_orig"]
-        # Tag solo per categoria/marca
-        active_row["tag"] = f"{active_row.get('cat1','')},{active_row.get('marca','')}"
-        rows_out.append(active_row)
+        row_out = {k: v for k, v in best_item.items() if k not in ["_supplier","_price_num","_sku_orig"]}
 
-        # 2️⃣ Se il prezzo migliore è di un altro fornitore, creiamo un nuovo SKU
-        if best_supplier != supplier_storico:
-            new_row = {k: v for k, v in best_item.items() if k not in ["_supplier","_price_num","_sku_orig"]}
-            new_row["sku"] = f"{best_supplier}_{best_item['_sku_orig']}"
-            new_row["tag"] = f"{new_row.get('cat1','')},{new_row.get('marca','')}"
-            rows_out.append(new_row)
+        # ✅ Solo per l'EAN di test: sostituiamo SKU con EAN
+        if ean == EAN_TEST:
+            row_out["sku"] = ean
+        else:
+            row_out["sku"] = best_item["_sku_orig"]
+
+        # Tag solo categoria/marca
+        row_out["tag"] = f"{row_out.get('cat1','')},{row_out.get('marca','')}"
+
+        rows_out.append(row_out)
 
     # -----------------------------
     # Scrittura CSV finale
