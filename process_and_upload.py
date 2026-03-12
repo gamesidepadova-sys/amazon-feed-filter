@@ -100,30 +100,47 @@ def main():
 
     ean_dict = defaultdict(list)
     error_rows = []
-    skipped_ean = 0
+
+    # DEBUG counters
+    stats = {
+        "bad_supplier": [],
+        "bad_cat1": [],
+        "bad_title": [],
+        "bad_qty": [],
+        "bad_ean": [],
+    }
 
     for i, r in enumerate(reader, 1):
         try:
             sku = r.get("sku") or r.get("SKU") or ""
             supplier = supplier_from_sku(sku)
             if supplier not in ALLOWED_SUPPLIERS:
+                if len(stats["bad_supplier"]) < 3:
+                    stats["bad_supplier"].append((i, sku))
                 continue
 
             cat1 = norm(r.get("cat1") or r.get("categoria") or "")
             if cat1 not in ALLOWED_CAT1:
+                if len(stats["bad_cat1"]) < 3:
+                    stats["bad_cat1"].append((i, cat1))
                 continue
 
             titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
             if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+                if len(stats["bad_title"]) < 3:
+                    stats["bad_title"].append((i, titolo))
                 continue
 
             qty = to_int(r.get("quantita") or r.get("qty"))
             if qty < MIN_QTY:
+                if len(stats["bad_qty"]) < 3:
+                    stats["bad_qty"].append((i, qty))
                 continue
 
             ean = clean_text(r.get("ean") or "")
             if not valid_ean(ean):
-                skipped_ean += 1
+                if len(stats["bad_ean"]) < 3:
+                    stats["bad_ean"].append((i, ean))
                 continue
 
             prezzo = to_float(r.get("prezzo_iva_esclusa"))
@@ -143,13 +160,23 @@ def main():
         except Exception as e:
             error_rows.append((i, str(e)))
 
+    # -----------------------------
+    # DEBUG OUTPUT
+    # -----------------------------
+    print("\n📊 STATISTICHE FILTRI:")
+    for key, items in stats.items():
+        print(f" - {key}: {len(items)}")
+        for ex in items:
+            print(f"    es: riga {ex[0]} → {ex[1]}")
+
+    if error_rows:
+        print(f"\n⚠ Errori parsing: {len(error_rows)}")
+        print(f"   es: riga {error_rows[0][0]} → {error_rows[0][1]}")
+
     if not ean_dict:
         raise Exception("❌ Feed vuoto dopo i filtri: upload bloccato!")
 
-    print(f"📦 Prodotti raggruppati per EAN: {len(ean_dict)}")
-    print(f"🚫 EAN scartati: {skipped_ean}")
-    if error_rows:
-        print(f"⚠ Errori parsing: {len(error_rows)} (es. riga {error_rows[0][0]})")
+    print(f"\n📦 Prodotti raggruppati per EAN: {len(ean_dict)}")
 
     # -----------------------------
     # Selezione miglior offerta per EAN
@@ -177,7 +204,7 @@ def main():
         for r in rows_out:
             writer.writerow(r)
 
-    print(f"📝 Feed generato correttamente: {OUTPUT_FILE}")
+    print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
     print(f"📊 Righe finali: {len(rows_out)}")
 
 if __name__ == "__main__":
