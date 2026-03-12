@@ -45,18 +45,16 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
-# 🔥 FIX PREZZO: NON rimuovere i punti
 def to_float(x, default=0.0) -> float:
     try:
         s = str(x or "").strip()
         if not s:
             return default
-        s = s.replace(",", ".")  # <-- FIX
+        s = s.replace(",", ".")
         return float(s)
     except Exception:
         return default
 
-# Regex robusta per trovare 0372–0383 ovunque nello SKU
 def supplier_from_sku(sku: str) -> str:
     sku = sku or ""
     m = re.search(r"(03[0-9]{2})", sku)
@@ -144,18 +142,21 @@ def main():
                     stats["bad_ean"].append((i, ean))
                 continue
 
-            prezzo = to_float(r.get("prezzo_iva_esclusa"))
+            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
+            prezzo_num = to_float(prezzo_raw)
 
             row = {}
             for k in fields:
                 if k == "quantita":
                     row[k] = qty
                 elif k == "prezzo_iva_esclusa":
-                    row[k] = f"{prezzo:.2f}"
+                    # come nel vecchio feed: stringa (con virgola se presente)
+                    row[k] = clean_text(prezzo_raw)
                 else:
                     row[k] = clean_text(r.get(k) or "")
 
             row["_supplier"] = supplier
+            row["_price_num"] = prezzo_num
             ean_dict[ean].append(row)
 
         except Exception as e:
@@ -180,11 +181,14 @@ def main():
     for ean, items in ean_dict.items():
         preferred = [x for x in items if x["_supplier"] == "0373"]
         if preferred:
-            chosen = min(preferred, key=lambda x: float(x["prezzo_iva_esclusa"]))
+            chosen = min(preferred, key=lambda x: x["_price_num"])
         else:
-            chosen = min(items, key=lambda x: float(x["prezzo_iva_esclusa"]))
+            chosen = min(items, key=lambda x: x["_price_num"])
 
-        chosen = {k: v for k, v in chosen.items() if k != "_supplier"}
+        chosen = {
+            k: v for k, v in chosen.items()
+            if k not in ["_supplier", "_price_num"]
+        }
         rows_out.append(chosen)
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
