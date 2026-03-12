@@ -45,17 +45,18 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
+# 🔥 FIX PREZZO: NON rimuovere i punti
 def to_float(x, default=0.0) -> float:
     try:
         s = str(x or "").strip()
         if not s:
             return default
-        s = s.replace(".", "").replace(",", ".")
+        s = s.replace(",", ".")  # <-- FIX
         return float(s)
     except Exception:
         return default
 
-# 🔥 PATCH: regex robusta che riconosce 0372–0383 ovunque nello SKU
+# Regex robusta per trovare 0372–0383 ovunque nello SKU
 def supplier_from_sku(sku: str) -> str:
     sku = sku or ""
     m = re.search(r"(03[0-9]{2})", sku)
@@ -102,7 +103,6 @@ def main():
     ean_dict = defaultdict(list)
     error_rows = []
 
-    # DEBUG counters
     stats = {
         "bad_supplier": [],
         "bad_cat1": [],
@@ -161,9 +161,6 @@ def main():
         except Exception as e:
             error_rows.append((i, str(e)))
 
-    # -----------------------------
-    # DEBUG OUTPUT
-    # -----------------------------
     print("\n📊 STATISTICHE FILTRI:")
     for key, items in stats.items():
         print(f" - {key}: {len(items)}")
@@ -179,9 +176,6 @@ def main():
 
     print(f"\n📦 Prodotti raggruppati per EAN: {len(ean_dict)}")
 
-    # -----------------------------
-    # Selezione miglior offerta per EAN
-    # -----------------------------
     rows_out = []
     for ean, items in ean_dict.items():
         preferred = [x for x in items if x["_supplier"] == "0373"]
@@ -193,9 +187,6 @@ def main():
         chosen = {k: v for k, v in chosen.items() if k != "_supplier"}
         rows_out.append(chosen)
 
-    # -----------------------------
-    # Scrittura CSV finale
-    # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
             out, fieldnames=fields, delimiter="|",
