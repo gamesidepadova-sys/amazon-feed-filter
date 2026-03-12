@@ -96,6 +96,9 @@ def main():
 
     ean_dict = defaultdict(list)
 
+    # -----------------------------
+    # Lettura feed originale
+    # -----------------------------
     for r in reader:
         try:
             sku = r.get("sku") or r.get("SKU") or ""
@@ -131,7 +134,7 @@ def main():
                 else:
                     row[k] = clean_text(r.get(k) or "")
 
-            # Salviamo internamente SKU e prezzo per logica
+            # Variabili interne
             row["_supplier"] = supplier
             row["_price_num"] = prezzo_num
             row["_sku_orig"] = sku
@@ -142,22 +145,25 @@ def main():
 
     rows_out = []
 
+    # -----------------------------
+    # Mantieni SKU storico e aggiorna quantità/prezzo
+    # -----------------------------
     for ean, items in ean_dict.items():
-        # Scegli fornitore preferito (0373 se presente)
-        preferred = [x for x in items if x["_supplier"] == "0373"]
-        if preferred:
-            chosen = min(preferred, key=lambda x: x["_price_num"])
-        else:
-            chosen = min(items, key=lambda x: x["_price_num"])
+        # Manteniamo sempre lo SKU storico del feed
+        chosen = items[0]  # Primo elemento per lo SKU storico
+        active_row = {k: v for k, v in chosen.items() if k not in ["_supplier","_price_num","_sku_orig"]}
 
-        # Mantieni SKU storico e crea tag
-        active_row = {k: v for k, v in chosen.items() if k not in ["_supplier", "_price_num", "_sku_orig"]}
+        # Ripristiniamo SKU storico
         active_row["sku"] = chosen["_sku_orig"]
+
+        # Tag per filtraggio in Poleepo
         active_row["tag"] = f"{chosen['_supplier']},{active_row.get('cat1','')},{active_row.get('marca','')}"
 
         rows_out.append(active_row)
 
+    # -----------------------------
     # Scrittura CSV finale
+    # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
             out, fieldnames=fields, delimiter="|",
