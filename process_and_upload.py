@@ -6,9 +6,6 @@ import re
 import requests
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# -----------------------------
-# Configurazioni
-# -----------------------------
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 PREVIOUS_FEED_FILE = "feed_poleepo_prev.json"
@@ -23,6 +20,7 @@ ALLOWED_CAT1 = {
 }
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
+MAX_DIFF_0373 = 20  # differenza massima per preferire 0373
 
 # -----------------------------
 # Utility
@@ -77,16 +75,16 @@ def clean_text(text: str) -> str:
     return t.strip()
 
 def valid_ean(ean: str) -> bool:
-    if not ean:
-        return False
+    if not ean: return False
     e = ean.strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
 # -----------------------------
-# Funzione per batch multiprocess
+# Process batch
 # -----------------------------
 def process_batch(rows):
-    results = {}
+    # Raggruppa per EAN: lista di SKU candidati
+    ean_groups = {}
     for r in rows:
         try:
             sku = r.get("sku") or r.get("SKU") or ""
@@ -124,11 +122,30 @@ def process_batch(rows):
             row_out["ean"] = ean
             row_out["_price"] = prezzo_totale
             row_out["_marca"] = marca
+            row_out["_supplier"] = supplier
 
-            results[sku] = row_out
+            ean_groups.setdefault(ean, []).append(row_out)
         except Exception:
             continue
-    return results
+
+    # Ora scegli il miglior SKU per ogni EAN secondo la regola 0373
+    best_ean_rows = {}
+    for ean, rows in ean_groups.items():
+        # Trova prezzo minimo
+        min_price_row = min(rows, key=lambda x: x["_price"])
+        price_min = min_price_row["_price"]
+
+        # Trova eventuale 0373
+        row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
+
+        if row_0373 and row_0373["_price"] <= price_min + MAX_DIFF_0373:
+            chosen_row = row_0373
+        else:
+            chosen_row = min_price_row
+
+        best_ean_rows[ean] = chosen_row
+
+    return best_ean_rows
 
 # -----------------------------
 # Main
@@ -139,7 +156,7 @@ def main():
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
     delim = detect_delim(text)
-    reader = list(csv.DictReader(io.StringIO(text), delimiter=delim))  # carica tutte le righe per batching
+    reader = list(csv.DictReader(io.StringIO(text), delimiter=delim))
 
     # Carica feed precedente
     previous_feed = {}
@@ -147,48 +164,40 @@ def main():
         with open(PREVIOUS_FEED_FILE, "r", encoding="utf-8") as f:
             previous_feed = json.load(f)
 
-    # Dividi in batch
+    # Batch
     batch_size = 2000
     batches = [reader[i:i+batch_size] for i in range(0, len(reader), batch_size)]
 
-    best_by_sku = {}
+    best_by_ean = {}
 
     # Multiprocessing
-    from concurrent.futures import ProcessPoolExecutor, as_completed
     with ProcessPoolExecutor() as executor:
         futures = [executor.submit(process_batch, batch) for batch in batches]
         for future in as_completed(futures):
             batch_result = future.result()
-            for sku, row in batch_result.items():
-                prev = previous_feed.get(sku)
-                if prev and prev["_price"] == row["_price"] and prev["quantita"] == row["quantita"] and prev["ean"] == row["ean"] and prev["tag"] == row["tag"]:
-                    continue
-                if sku in best_by_sku:
-                    if row["_price"] < best_by_sku[sku]["_price"]:
-                        best_by_sku[sku] = row
-                else:
-                    best_by_sku[sku] = row
+            best_by_ean.update(batch_result)
 
-    if not best_by_sku:
+    if not best_by_ean:
         print("ℹ Nessuna modifica significativa rispetto al feed precedente.")
         return
 
-    # Scrittura CSV in streaming
-    modified_count = 0
+    # Scrittura CSV con SKU storico come chiave
     fields = [
         "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
         "titolo_prodotto","immagine_principale","descrizione_prodotto",
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
+    modified_count = 0
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(out, fieldnames=fields, delimiter="|",
                                 quoting=csv.QUOTE_NONE, escapechar="\\")
         writer.writeheader()
         snapshot = previous_feed.copy()
-        for sku, row in best_by_sku.items():
+        for ean, row in best_by_ean.items():
+            sku = row["sku"]  # mantieni SKU storico
             row_out = {k: v for k, v in row.items() if not k.startswith("_")}
             writer.writerow(row_out)
-            # Salva solo i campi essenziali per incrementale
+            # snapshot leggero: solo campi essenziali per incrementale
             snapshot[sku] = {
                 "_price": row["_price"],
                 "quantita": row["quantita"],
