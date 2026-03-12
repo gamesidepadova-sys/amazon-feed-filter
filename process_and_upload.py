@@ -131,9 +131,10 @@ def main():
                 else:
                     row[k] = clean_text(r.get(k) or "")
 
+            # Salviamo internamente SKU e prezzo per logica
             row["_supplier"] = supplier
             row["_price_num"] = prezzo_num
-            row["_original_sku"] = sku  # mantiene SKU storico
+            row["_sku_orig"] = sku
             ean_dict[ean].append(row)
 
         except Exception:
@@ -150,8 +151,8 @@ def main():
             chosen = min(items, key=lambda x: x["_price_num"])
 
         # Mantieni SKU storico e crea tag
-        active_row = {k: v for k, v in chosen.items() if k not in ["_supplier", "_price_num"]}
-        active_row["sku"] = chosen["_original_sku"]
+        active_row = {k: v for k, v in chosen.items() if k not in ["_supplier", "_price_num", "_sku_orig"]}
+        active_row["sku"] = chosen["_sku_orig"]
         active_row["tag"] = f"{chosen['_supplier']},{active_row.get('cat1','')},{active_row.get('marca','')}"
 
         rows_out.append(active_row)
