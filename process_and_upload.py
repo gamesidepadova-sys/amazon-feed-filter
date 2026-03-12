@@ -21,7 +21,7 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 
 # -----------------------------
-# Funzioni di utilità
+# Utility
 # -----------------------------
 def detect_delim(text: str) -> str:
     try:
@@ -38,34 +38,34 @@ def detect_delim(text: str) -> str:
 def to_int(x, default=0) -> int:
     try:
         s = str(x or "").strip()
-        if not s: return default
-        return int(float(s.replace(",", ".")))
+        if not s:
+            return default
+        s = s.replace(".", "").replace(",", ".")
+        return int(float(s))
     except Exception:
         return default
 
 def to_float(x, default=0.0) -> float:
     try:
         s = str(x or "").strip()
-        if not s: return default
-        return float(s.replace(",", "."))
+        if not s:
+            return default
+        s = s.replace(".", "").replace(",", ".")
+        return float(s)
     except Exception:
         return default
 
 def supplier_from_sku(sku: str) -> str:
-    parts = (sku or "").split("_")
-    if len(parts) >= 2 and parts[1].isdigit():
-        return parts[1]
-    for p in parts:
-        if len(p) == 4 and p.isdigit():
-            return p
-    return ""
+    sku = sku or ""
+    m = re.search(r"\b(03\d{2})\b", sku)
+    return m.group(1) if m else ""
 
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
 
 def clean_text(text: str) -> str:
     t = str(text or "")
-    t = re.sub("<.*?>", " ", t)  # rimuove HTML
+    t = re.sub("<.*?>", " ", t)
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
@@ -73,6 +73,12 @@ def clean_text(text: str) -> str:
     t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
+
+def valid_ean(ean: str) -> bool:
+    if not ean:
+        return False
+    e = ean.strip()
+    return e.isdigit() and 8 <= len(e) <= 14
 
 # -----------------------------
 # Main
@@ -82,9 +88,9 @@ def main():
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
-    f = io.StringIO(text)
+
     delim = detect_delim(text)
-    reader = csv.DictReader(f, delimiter=delim)
+    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
 
     fields = [
         "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
@@ -92,9 +98,9 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
-    # Raggruppa righe per EAN
     ean_dict = defaultdict(list)
     error_rows = []
+    skipped_ean = 0
 
     for i, r in enumerate(reader, 1):
         try:
@@ -115,35 +121,53 @@ def main():
             if qty < MIN_QTY:
                 continue
 
+            ean = clean_text(r.get("ean") or "")
+            if not valid_ean(ean):
+                skipped_ean += 1
+                continue
+
             prezzo = to_float(r.get("prezzo_iva_esclusa"))
-            row = {k: clean_text(r.get(k)) if k not in ["quantita","prezzo_iva_esclusa"] else (qty if k=="quantita" else prezzo) for k in fields}
-            row["_supplier"] = supplier  # per regola 0373
-            ean_dict[row["ean"]].append(row)
+
+            row = {}
+            for k in fields:
+                if k == "quantita":
+                    row[k] = qty
+                elif k == "prezzo_iva_esclusa":
+                    row[k] = f"{prezzo:.2f}"
+                else:
+                    row[k] = clean_text(r.get(k) or "")
+
+            row["_supplier"] = supplier
+            ean_dict[ean].append(row)
+
         except Exception as e:
             error_rows.append((i, str(e)))
 
     if not ean_dict:
         raise Exception("❌ Feed vuoto dopo i filtri: upload bloccato!")
 
-    print(f"✅ Prodotti filtrati per EAN: {len(ean_dict)}")
+    print(f"📦 Prodotti raggruppati per EAN: {len(ean_dict)}")
+    print(f"🚫 EAN scartati: {skipped_ean}")
     if error_rows:
-        print(f"⚠ Righe con errore: {len(error_rows)} (es. riga {error_rows[0][0]})")
+        print(f"⚠ Errori parsing: {len(error_rows)} (es. riga {error_rows[0][0]})")
 
-    # Seleziona il prezzo migliore per EAN con regola 0373
+    # -----------------------------
+    # Selezione miglior offerta per EAN
+    # -----------------------------
     rows_out = []
     for ean, items in ean_dict.items():
-        chosen = None
-        # Trova tutti con supplier 0373
         preferred = [x for x in items if x["_supplier"] == "0373"]
         if preferred:
-            # Prendi quello con prezzo più basso tra 0373
-            chosen = min(preferred, key=lambda x: x["prezzo_iva_esclusa"])
+            chosen = min(preferred, key=lambda x: float(x["prezzo_iva_esclusa"]))
         else:
-            # Prendi prezzo minimo tra tutti
-            chosen = min(items, key=lambda x: x["prezzo_iva_esclusa"])
-        rows_out.append({k:v for k,v in chosen.items() if k!="_supplier"})
+            chosen = min(items, key=lambda x: float(x["prezzo_iva_esclusa"]))
 
-    # Scrittura feed finale
+        chosen = {k: v for k, v in chosen.items() if k != "_supplier"}
+        rows_out.append(chosen)
+
+    # -----------------------------
+    # Scrittura CSV finale
+    # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
             out, fieldnames=fields, delimiter="|",
@@ -154,6 +178,7 @@ def main():
             writer.writerow(r)
 
     print(f"📝 Feed generato correttamente: {OUTPUT_FILE}")
+    print(f"📊 Righe finali: {len(rows_out)}")
 
 if __name__ == "__main__":
     main()
