@@ -7,7 +7,7 @@ from collections import defaultdict
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
-ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
+ALLOWED_SUPPLIERS = {"0372","0373","0374","0380","0381","0382","0383"}
 
 ALLOWED_CAT1 = {
     "informatica",
@@ -17,79 +17,77 @@ ALLOWED_CAT1 = {
     "salute, beauty e fitness",
 }
 
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory","montatura"}
+
 MIN_QTY = 10
 
-# -----------------------------
+
+# -------------------------
 # Utility
-# -----------------------------
-def detect_delim(text: str) -> str:
+# -------------------------
+
+def detect_delim(text):
     try:
-        sample = text[:8192]
-        d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        return d.delimiter
-    except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first: return "\t"
-        if "|" in first: return "|"
-        if ";" in first and first.count(";") > first.count(","): return ";"
+        return csv.Sniffer().sniff(text[:5000], delimiters=",;\t|").delimiter
+    except:
         return ","
 
-def to_int(x, default=0) -> int:
+
+def to_int(x):
     try:
-        s = str(x or "").strip()
-        if not s:
-            return default
-        s = s.replace(".", "").replace(",", ".")
+        s = str(x).strip().replace(",",".")
         return int(float(s))
-    except Exception:
-        return default
+    except:
+        return 0
 
-def to_float(x, default=0.0) -> float:
+
+def to_float(x):
     try:
-        s = str(x or "").strip()
-        if not s:
-            return default
-        s = s.replace(",", ".")
+        s = str(x).strip().replace(",",".")
         return float(s)
-    except Exception:
-        return default
+    except:
+        return 0.0
 
-def supplier_from_sku(sku: str) -> str:
-    sku = sku or ""
-    m = re.search(r"(03[0-9]{2})", sku)
+
+def supplier_from_sku(sku):
+    m = re.search(r"(03[0-9]{2})", sku or "")
     return m.group(1) if m else ""
 
-def norm(s: str) -> str:
-    return str(s or "").strip().lower()
 
-def clean_text(text: str) -> str:
-    t = str(text or "")
-    t = re.sub("<.*?>", " ", t)
-    t = t.replace("&nbsp;", " ")
-    t = t.replace('"', "")
-    t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
-    t = re.sub(" +", " ", t)
+def norm(x):
+    return str(x or "").strip().lower()
+
+
+def clean_text(t):
+    t = str(t or "")
+    t = re.sub("<.*?>"," ",t)
+    t = t.replace("&nbsp;"," ")
+    t = t.replace("|"," ")
+    t = t.replace('"',"")
+    t = re.sub(r"\s+"," ",t)
     return t.strip()
 
-def valid_ean(ean: str) -> bool:
-    if not ean:
-        return False
-    e = ean.strip()
+
+def valid_ean(ean):
+    e = str(ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
-# -----------------------------
+
+# -------------------------
 # Main
-# -----------------------------
+# -------------------------
+
 def main():
-    print("📥 Scarico feed originale...")
+
+    print("📥 Download feed...")
+
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
-    text = resp.content.decode("utf-8-sig", errors="replace")
+
+    text = resp.content.decode("utf-8-sig","replace")
 
     delim = detect_delim(text)
+
     reader = csv.DictReader(io.StringIO(text), delimiter=delim)
 
     fields = [
@@ -98,111 +96,113 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
-    ean_dict = defaultdict(list)
-    error_rows = []
+    ean_map = defaultdict(list)
 
-    stats = {
-        "bad_supplier": [],
-        "bad_cat1": [],
-        "bad_title": [],
-        "bad_qty": [],
-        "bad_ean": [],
-    }
+    rows_read = 0
+    rows_valid = 0
 
-    for i, r in enumerate(reader, 1):
-        try:
-            sku = r.get("sku") or r.get("SKU") or ""
-            supplier = supplier_from_sku(sku)
-            if supplier not in ALLOWED_SUPPLIERS:
-                continue
+    for r in reader:
 
-            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
-            if cat1 not in ALLOWED_CAT1:
-                continue
+        rows_read += 1
 
-            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
-            if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
-                continue
+        sku = r.get("sku") or r.get("SKU") or ""
+        supplier = supplier_from_sku(sku)
 
-            qty = to_int(r.get("quantita") or r.get("qty"))
-            if qty < MIN_QTY:
-                continue
+        if supplier not in ALLOWED_SUPPLIERS:
+            continue
 
-            ean = clean_text(r.get("ean") or "")
-            if not valid_ean(ean):
-                continue
+        cat1 = norm(r.get("cat1") or r.get("categoria"))
 
-            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
-            prezzo_num = to_float(prezzo_raw)
+        if cat1 not in ALLOWED_CAT1:
+            continue
 
-            row = {}
-            for k in fields:
-                if k == "quantita":
-                    row[k] = qty
-                elif k == "prezzo_iva_esclusa":
-                    row[k] = clean_text(prezzo_raw)
-                else:
-                    row[k] = clean_text(r.get(k) or "")
+        titolo = norm(r.get("titolo_prodotto") or r.get("nome"))
 
-            row["_supplier"] = supplier
-            row["_price_num"] = prezzo_num
-            ean_dict[ean].append(row)
+        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+            continue
 
-        except Exception as e:
-            error_rows.append((i, str(e)))
+        qty = to_int(r.get("quantita") or r.get("qty"))
 
-    print(f"\n📦 Prodotti raggruppati per EAN: {len(ean_dict)}")
+        if qty < MIN_QTY:
+            continue
+
+        ean = clean_text(r.get("ean"))
+
+        if not valid_ean(ean):
+            continue
+
+        price_raw = r.get("prezzo_iva_esclusa")
+        price_num = to_float(price_raw)
+
+        if price_num <= 0:
+            continue
+
+        row = {
+            "cat1": clean_text(r.get("cat1")),
+            "sku": clean_text(sku),
+            "ean": ean,
+            "mpn": clean_text(r.get("mpn")),
+            "quantita": qty,
+            "prezzo_iva_esclusa": f"{price_num:.2f}",
+            "titolo_prodotto": clean_text(r.get("titolo_prodotto")),
+            "immagine_principale": clean_text(r.get("immagine_principale")),
+            "descrizione_prodotto": clean_text(r.get("descrizione_prodotto")),
+            "costo_spedizione": clean_text(r.get("costo_spedizione")),
+            "cat2": clean_text(r.get("cat2")),
+            "cat3": clean_text(r.get("cat3")),
+            "marca": clean_text(r.get("marca")),
+            "peso": clean_text(r.get("peso")),
+            "_supplier": supplier,
+            "_price": price_num
+        }
+
+        ean_map[ean].append(row)
+
+        rows_valid += 1
+
+
+    print("Righe lette:", rows_read)
+    print("Righe valide:", rows_valid)
+    print("EAN unici:", len(ean_map))
+
 
     rows_out = []
 
-    # -----------------------------
-    # NUOVA LOGICA SICURA
-    # -----------------------------
-    for ean, items in ean_dict.items():
+    for ean, items in ean_map.items():
 
-        # 1. Scegliamo lo SKU migliore
         preferred = [x for x in items if x["_supplier"] == "0373"]
+
         if preferred:
-            chosen = min(preferred, key=lambda x: x["_price_num"])
+            chosen = min(preferred, key=lambda x: x["_price"])
         else:
-            chosen = min(items, key=lambda x: x["_price_num"])
+            chosen = min(items, key=lambda x: x["_price"])
 
-        # 2. SKU attivo → mantiene quantità e prezzo reali
-        active_row = {
-            k: v for k, v in chosen.items()
-            if k not in ["_supplier", "_price_num"]
-        }
-        rows_out.append(active_row)
+        final_row = {k:v for k,v in chosen.items() if not k.startswith("_")}
 
-        # 3. SKU inattivi → prezzo = 0, quantità = 0
-        for r in items:
-            if r is chosen:
-                continue
+        rows_out.append(final_row)
 
-            inactive_row = {
-                k: v for k, v in r.items()
-                if k not in ["_supplier", "_price_num"]
-            }
 
-            inactive_row["prezzo_iva_esclusa"] = "0"
-            inactive_row["quantita"] = 0
+    print("Prodotti finali:", len(rows_out))
 
-            rows_out.append(inactive_row)
 
-    # -----------------------------
-    # Scrittura CSV finale
-    # -----------------------------
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
+    with open(OUTPUT_FILE,"w",encoding="utf-8",newline="") as f:
+
         writer = csv.DictWriter(
-            out, fieldnames=fields, delimiter="|",
-            quoting=csv.QUOTE_NONE, escapechar="\\"
+            f,
+            fieldnames=fields,
+            delimiter="|",
+            quoting=csv.QUOTE_NONE,
+            escapechar="\\"
         )
+
         writer.writeheader()
+
         for r in rows_out:
             writer.writerow(r)
 
-    print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
-    print(f"📊 Righe finali: {len(rows_out)}")
+
+    print("✅ Feed generato:", OUTPUT_FILE)
+
 
 if __name__ == "__main__":
     main()
