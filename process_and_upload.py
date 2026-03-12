@@ -55,9 +55,10 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
+# 🔥 PATCH: regex robusta che riconosce 0372–0383 ovunque nello SKU
 def supplier_from_sku(sku: str) -> str:
     sku = sku or ""
-    m = re.search(r"\b(03\d{2})\b", sku)
+    m = re.search(r"(03[0-9]{2})", sku)
     return m.group(1) if m else ""
 
 def norm(s: str) -> str:
