@@ -58,8 +58,13 @@ def to_float(x, default=0.0) -> float:
         return default
 
 def supplier_from_sku(sku: str) -> str:
-    m = re.search(r"(03[0-9]{2})", sku or "")
-    return m.group(1) if m else ""
+    if not sku:
+        return ""
+    parts = sku.split("_")
+    for p in parts:
+        if p in ALLOWED_SUPPLIERS:
+            return p
+    return ""
 
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
