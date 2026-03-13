@@ -5,6 +5,7 @@ import re
 import sys
 from collections import defaultdict
 
+# 🔧 Fix errore campo troppo grande
 csv.field_size_limit(sys.maxsize)
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
@@ -33,7 +34,7 @@ def detect_delim(text: str) -> str:
     try:
         return csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
     except Exception:
-        return ";"  # più stabile per feed europei
+        return ";"
 
 
 def to_int(x):
@@ -95,7 +96,7 @@ def main():
     ean_groups = defaultdict(list)
 
     # -----------------------------
-    # 1️⃣ Filtri e raggruppamento
+    # 1️⃣ FILTRI (invariati)
     # -----------------------------
     for r in reader:
 
@@ -157,7 +158,7 @@ def main():
             best_supplier_by_ean[ean] = min_row
 
     # -----------------------------
-    # 3️⃣ Scrittura file finale
+    # 3️⃣ SCRITTURA FILE FINALE
     # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
 
@@ -183,11 +184,10 @@ def main():
                 out_row["quantita"] = best["quantita"]
                 out_row["prezzo_iva_esclusa"] = best.get("prezzo_iva_esclusa", "")
 
-                # 🔥 categoria con fornitore
+                # 🔥 SUFFISSO CATEGORIA
                 base_cat = r["cat1"]
                 out_row["cat1"] = f"{base_cat}_{best['_supplier']}"
 
-                # rimuove campi interni
                 out_row.pop("_price", None)
                 out_row.pop("_supplier", None)
 
