@@ -16,7 +16,7 @@ ALLOWED_CAT1 = {
 }
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
-MAX_DIFF_0373 = 20  # regola preferenza 0373
+MAX_DIFF_0373 = 20
 
 # -----------------------------
 # Utility
@@ -54,8 +54,7 @@ def to_float(x, default=0.0) -> float:
         return default
 
 def supplier_from_sku(sku: str) -> str:
-    sku = sku or ""
-    m = re.search(r"(03[0-9]{2})", sku)
+    m = re.search(r"(03[0-9]{2})", sku or "")
     return m.group(1) if m else ""
 
 def norm(s: str) -> str:
@@ -73,9 +72,7 @@ def clean_text(text: str) -> str:
     return t.strip()
 
 def valid_ean(ean: str) -> bool:
-    if not ean:
-        return False
-    e = ean.strip()
+    e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
 # -----------------------------
@@ -90,14 +87,22 @@ def main():
     delim = detect_delim(text)
     reader = csv.DictReader(io.StringIO(text), delimiter=delim)
 
+    fields = [
+        "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
+        "titolo_prodotto","immagine_principale","descrizione_prodotto",
+        "costo_spedizione","cat2","cat3","marca","peso","tag"
+    ]
+
     # -----------------------------
-    # Raggruppa tutti i prodotti per EAN
+    # Raggruppamento per EAN
     # -----------------------------
     ean_groups = {}
+
     for r in reader:
         try:
             sku = r.get("sku") or r.get("SKU") or ""
             supplier = supplier_from_sku(sku)
+
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
 
@@ -118,65 +123,68 @@ def main():
                 continue
 
             prezzo_raw = r.get("prezzo_iva_esclusa") or ""
-            prezzo_num = to_float(prezzo_raw)
+            prezzo = to_float(prezzo_raw)
             spedizione = to_float(r.get("costo_spedizione"))
-            prezzo_totale = prezzo_num + spedizione  # prezzo reale
+            prezzo_totale = prezzo + spedizione
 
-            row = {
-                "sku": sku,
-                "ean": ean,
-                "quantita": qty,
-                "prezzo_iva_esclusa": prezzo_raw,
-                "tag": f"supplier_{supplier}",
-                "_price": prezzo_totale,
-                "_supplier": supplier
-            }
+            row = {k: clean_text(r.get(k) or "") for k in fields}
+
+            row["quantita"] = qty
+            row["prezzo_iva_esclusa"] = prezzo_raw
+            row["tag"] = f"supplier_{supplier}"
+
+            row["_price"] = prezzo_totale
+            row["_supplier"] = supplier
 
             ean_groups.setdefault(ean, []).append(row)
 
-        except Exception as e:
-            print(f"⚠ Errore riga: {e}")
+        except Exception:
+            continue
 
     if not ean_groups:
-        raise Exception("❌ Nessun prodotto valido dopo filtri!")
+        raise Exception("❌ Feed vuoto dopo filtri")
 
     # -----------------------------
-    # Seleziona lo SKU migliore per ogni EAN
+    # Scelta migliore per EAN
     # -----------------------------
     best_by_ean = {}
-    for ean, rows in ean_groups.items():
-        # Trova prezzo minimo
-        min_price_row = min(rows, key=lambda x: x["_price"])
-        price_min = min_price_row["_price"]
 
-        # Controlla se 0373 entro MAX_DIFF_0373
+    for ean, rows in ean_groups.items():
+
+        min_row = min(rows, key=lambda x: x["_price"])
+        min_price = min_row["_price"]
+
         row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
-        if row_0373 and row_0373["_price"] <= price_min + MAX_DIFF_0373:
+
+        if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
             best_row = row_0373
         else:
-            best_row = min_price_row
+            best_row = min_row
 
-        best_by_ean[ean] = {
-            "ean": best_row["ean"],
-            "quantita": best_row["quantita"],
-            "prezzo_iva_esclusa": best_row["prezzo_iva_esclusa"],
-            "tag": best_row["tag"],
-            "sku": best_row["sku"]  # solo riferimento
-        }
+        best_by_ean[ean] = best_row
 
     print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
 
     # -----------------------------
     # Scrittura CSV finale
     # -----------------------------
-    fields = ["ean","quantita","prezzo_iva_esclusa","tag","sku"]
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
+
         writer = csv.DictWriter(
-            out, fieldnames=fields, delimiter="|",
-            quoting=csv.QUOTE_NONE, escapechar="\\"
+            out,
+            fieldnames=fields,
+            delimiter="|",
+            quoting=csv.QUOTE_NONE,
+            escapechar="\\"
         )
+
         writer.writeheader()
+
         for r in best_by_ean.values():
+
+            r.pop("_price", None)
+            r.pop("_supplier", None)
+
             writer.writerow(r)
 
     print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
