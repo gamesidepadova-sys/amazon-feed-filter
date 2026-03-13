@@ -41,7 +41,7 @@ def save_state(state):
             writer.writerow([ean, supplier])
 
 # -----------------------------
-# Utility (uguali al tuo)
+# Utility (identiche alle tue)
 # -----------------------------
 def detect_delim(text: str) -> str:
     try:
@@ -84,8 +84,6 @@ def clean_text(text: str) -> str:
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
 
@@ -164,20 +162,12 @@ def main():
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
-        current_supplier = state.get(ean)
-        current_row = next((r for r in rows if r["_supplier"] == current_supplier), None)
+        row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
 
-        if current_row:
-            if min_price < current_row["_price"]:
-                best_row = min_row
-            else:
-                best_row = current_row
+        if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
+            best_row = row_0373
         else:
             best_row = min_row
-
-        row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
-        if row_0373 and row_0373["_price"] <= best_row["_price"] + MAX_DIFF_0373:
-            best_row = row_0373
 
         best_by_ean[ean] = best_row
 
@@ -200,7 +190,6 @@ def main():
             supplier = r.get("_supplier", "")
             prev_supplier = state.get(ean)
 
-            # TAG SOLO SE CAMBIA FORNITORE
             if prev_supplier != supplier:
                 r["tag"] = f"supplier_change_{supplier}_{today}"
                 state[ean] = supplier
