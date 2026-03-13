@@ -49,6 +49,13 @@ def detect_delim(text: str) -> str:
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
     except Exception:
+        first = text.splitlines()[0] if text else ""
+        if "\t" in first:
+            return "\t"
+        if "|" in first:
+            return "|"
+        if ";" in first and first.count(";") > first.count(","):
+            return ";"
         return ","
 
 def to_int(x, default=0) -> int:
@@ -84,6 +91,8 @@ def clean_text(text: str) -> str:
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
+    t = t.replace("\n", " ")
+    t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
 
@@ -109,11 +118,14 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
 
+    # -----------------------------
+    # Raggruppamento per EAN
+    # -----------------------------
     ean_groups = {}
 
     for r in reader:
         try:
-            sku = r.get("sku") or ""
+            sku = r.get("sku") or r.get("SKU") or ""
             supplier = supplier_from_sku(sku)
 
             if supplier not in ALLOWED_SUPPLIERS:
@@ -135,13 +147,15 @@ def main():
             if not valid_ean(ean):
                 continue
 
-            prezzo = to_float(r.get("prezzo_iva_esclusa"))
+            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
+            prezzo = to_float(prezzo_raw)
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["quantita"] = qty
-            row["tag"] = ""  # default vuoto
+            row["prezzo_iva_esclusa"] = prezzo_raw
+            row["tag"] = f"supplier_{supplier}"
 
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
@@ -154,6 +168,9 @@ def main():
     if not ean_groups:
         raise Exception("❌ Feed vuoto dopo filtri")
 
+    # -----------------------------
+    # Scelta migliore per EAN
+    # -----------------------------
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
@@ -173,7 +190,7 @@ def main():
     print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
 
     # -----------------------------
-    # Scrittura CSV + TAG DINAMICO
+    # Scrittura CSV finale
     # -----------------------------
     state = load_state()
     today = datetime.now().strftime("%Y%m%d")
@@ -193,14 +210,16 @@ def main():
         for ean, r in best_by_ean.items():
 
             supplier = r.get("_supplier", "")
+
+            # --- LOGICA TAG DINAMICO ---
             prev_supplier = state.get(ean)
 
-            # Tag SOLO se cambia fornitore
             if prev_supplier != supplier:
                 r["tag"] = f"supplier_change_{supplier}_{today}"
                 state[ean] = supplier
             else:
                 r["tag"] = ""
+            # ----------------------------
 
             r.pop("_price", None)
             r.pop("_supplier", None)
