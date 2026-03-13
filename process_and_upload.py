@@ -1,3 +1,5 @@
+from datetime import datetime
+import os
 import csv
 import requests
 import io
@@ -5,6 +7,7 @@ import re
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
+STATE_FILE = "supplier_state.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
 ALLOWED_CAT1 = {
@@ -17,6 +20,25 @@ ALLOWED_CAT1 = {
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
+
+# -----------------------------
+# Stato supplier per EAN
+# -----------------------------
+def load_state():
+    state = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                state[r["ean"]] = r["supplier"]
+    return state
+
+def save_state(state):
+    with open(STATE_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ean", "supplier"])
+        for ean, supplier in state.items():
+            writer.writerow([ean, supplier])
 
 # -----------------------------
 # Utility
@@ -170,6 +192,9 @@ def main():
     # -----------------------------
     # Scrittura CSV finale
     # -----------------------------
+    state = load_state()
+    today = datetime.now().strftime("%Y%m%d")
+
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
 
         writer = csv.DictWriter(
@@ -190,10 +215,22 @@ def main():
             if base_cat and supplier:
                 r["cat1"] = f"{base_cat}_{supplier}"
 
+            # --- LOGICA TAG DINAMICO ---
+            prev_supplier = state.get(ean)
+
+            if prev_supplier != supplier:
+                r["tag"] = f"supplier_change_{supplier}_{today}"
+                state[ean] = supplier
+            else:
+                r["tag"] = ""
+            # ----------------------------
+
             r.pop("_price", None)
             r.pop("_supplier", None)
 
             writer.writerow(r)
+
+    save_state(state)
 
     print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
 
