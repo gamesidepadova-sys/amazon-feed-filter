@@ -214,7 +214,7 @@ def main():
             # --- LOGICA TAG DINAMICO ---
             prev_supplier = state.get(ean)
 
-            if prev_supplier and prev_supplier != supplier:
+            if prev_supplier is not None and prev_supplier != supplier:
                 r["tag"] = f"supplier_change_{supplier}_{today}"
             else:
                 r["tag"] = ""
