@@ -188,7 +188,7 @@ def main():
             supplier = r.get("_supplier", "")
 
             if base_cat and supplier:
-                r["cat1"] = f"FORNITORE_{supplier}_{base_cat}"
+                r["cat1"] = f"{base_cat}_{supplier}"
 
             r.pop("_price", None)
             r.pop("_supplier", None)
