@@ -155,7 +155,7 @@ def main():
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["quantita"] = qty
             row["prezzo_iva_esclusa"] = prezzo_raw
-            row["tag"] = f"supplier_{supplier}"
+            row["tag"] = ""
 
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
