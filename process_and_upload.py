@@ -188,14 +188,14 @@ def main():
         for ean, r in best_by_ean.items():
 
             supplier = r.get("_supplier", "")
-            sku = r.get("sku", "")
-            sku_supplier = supplier_from_sku(sku)
+    sku = r.get("sku", "")
+    sku_supplier = supplier_from_sku(sku)
 
-            # --- LOGICA TAG DI AVVISO ---
-            if supplier != sku_supplier:
-                r["tag"] = f"supplier_change_{supplier}_{today}"
-            else:
-                r["tag"] = ""
+    # Tag SOLO se il fornitore scelto NON è quello nello SKU
+    if supplier != sku_supplier:
+        r["tag"] = f"supplier_change_{supplier}_{today}"
+    else:
+        r["tag"] = ""
             # ----------------------------
 
             r.pop("_price", None)
