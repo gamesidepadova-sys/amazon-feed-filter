@@ -2,7 +2,10 @@ import csv
 import requests
 import io
 import re
+import sys
 from collections import defaultdict
+
+csv.field_size_limit(sys.maxsize)
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
