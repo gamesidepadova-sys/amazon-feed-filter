@@ -2,9 +2,12 @@ import csv
 import requests
 import io
 import re
+import os
+from datetime import datetime
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
+STATE_FILE = "supplier_state.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
 ALLOWED_CAT1 = {
@@ -17,6 +20,29 @@ ALLOWED_CAT1 = {
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
+SWITCH_THRESHOLD = 5  # stabilizzazione cambio fornitore
+
+
+# -----------------------------
+# Stato fornitore
+# -----------------------------
+def load_state():
+    state = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                state[r["ean"]] = r["supplier"]
+    return state
+
+
+def save_state(state):
+    with open(STATE_FILE, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ean", "supplier"])
+        for ean, supplier in state.items():
+            writer.writerow([ean, supplier])
+
 
 # -----------------------------
 # Utility
@@ -27,14 +53,8 @@ def detect_delim(text: str) -> str:
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
     except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first:
-            return "\t"
-        if "|" in first:
-            return "|"
-        if ";" in first and first.count(";") > first.count(","):
-            return ";"
         return ","
+
 
 def to_int(x, default=0) -> int:
     try:
@@ -46,6 +66,7 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
+
 def to_float(x, default=0.0) -> float:
     try:
         s = str(x or "").strip()
@@ -56,12 +77,15 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
+
 def supplier_from_sku(sku: str) -> str:
     m = re.search(r"(03[0-9]{2})", sku or "")
     return m.group(1) if m else ""
 
+
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
+
 
 def clean_text(text: str) -> str:
     t = str(text or "")
@@ -69,21 +93,22 @@ def clean_text(text: str) -> str:
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
+
 
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
+
 # -----------------------------
-# Main
+# MAIN
 # -----------------------------
 def main():
+
     print("📥 Scarico feed originale...")
-    resp = requests.get(INPUT_URL)
+    resp = requests.get(INPUT_URL, timeout=60)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
 
@@ -96,9 +121,6 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
 
-    # -----------------------------
-    # Raggruppamento per EAN
-    # -----------------------------
     ean_groups = {}
 
     for r in reader:
@@ -125,16 +147,12 @@ def main():
             if not valid_ean(ean):
                 continue
 
-            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
-            prezzo = to_float(prezzo_raw)
+            prezzo = to_float(r.get("prezzo_iva_esclusa"))
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["quantita"] = qty
-            row["prezzo_iva_esclusa"] = prezzo_raw
-            row["tag"] = f"supplier_{supplier}"
-
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
 
@@ -146,9 +164,9 @@ def main():
     if not ean_groups:
         raise Exception("❌ Feed vuoto dopo filtri")
 
-    # -----------------------------
-    # Scelta migliore per EAN
-    # -----------------------------
+    state = load_state()
+    today = datetime.now().strftime("%Y%m%d")
+
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
@@ -156,20 +174,25 @@ def main():
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
-        row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
+        current_supplier = state.get(ean)
+        current_row = next((r for r in rows if r["_supplier"] == current_supplier), None)
 
-        if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
-            best_row = row_0373
+        if current_row:
+            if min_price < current_row["_price"] - SWITCH_THRESHOLD:
+                best_row = min_row
+            else:
+                best_row = current_row
         else:
             best_row = min_row
+
+        row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
+        if row_0373 and row_0373["_price"] <= best_row["_price"] + MAX_DIFF_0373:
+            best_row = row_0373
 
         best_by_ean[ean] = best_row
 
     print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
 
-    # -----------------------------
-    # Scrittura CSV finale
-    # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
 
         writer = csv.DictWriter(
@@ -184,18 +207,24 @@ def main():
 
         for ean, r in best_by_ean.items():
 
-            base_cat = r.get("cat1", "")
             supplier = r.get("_supplier", "")
+            prev_supplier = state.get(ean)
 
-            if base_cat and supplier:
-                r["cat1"] = f"{base_cat}_{supplier}"
+            if prev_supplier != supplier:
+                r["tag"] = f"supplier_change_{supplier}_{today}"
+                state[ean] = supplier
+            else:
+                r["tag"] = ""
 
             r.pop("_price", None)
             r.pop("_supplier", None)
 
             writer.writerow(r)
 
+    save_state(state)
+
     print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
