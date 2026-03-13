@@ -20,11 +20,9 @@ ALLOWED_CAT1 = {
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
-SWITCH_THRESHOLD = 5  # stabilizzazione cambio fornitore
-
 
 # -----------------------------
-# Stato fornitore
+# Stato supplier
 # -----------------------------
 def load_state():
     state = {}
@@ -35,7 +33,6 @@ def load_state():
                 state[r["ean"]] = r["supplier"]
     return state
 
-
 def save_state(state):
     with open(STATE_FILE, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -43,9 +40,8 @@ def save_state(state):
         for ean, supplier in state.items():
             writer.writerow([ean, supplier])
 
-
 # -----------------------------
-# Utility
+# Utility (uguali al tuo)
 # -----------------------------
 def detect_delim(text: str) -> str:
     try:
@@ -54,7 +50,6 @@ def detect_delim(text: str) -> str:
         return d.delimiter
     except Exception:
         return ","
-
 
 def to_int(x, default=0) -> int:
     try:
@@ -66,7 +61,6 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
-
 def to_float(x, default=0.0) -> float:
     try:
         s = str(x or "").strip()
@@ -77,15 +71,12 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
-
 def supplier_from_sku(sku: str) -> str:
     m = re.search(r"(03[0-9]{2})", sku or "")
     return m.group(1) if m else ""
 
-
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
-
 
 def clean_text(text: str) -> str:
     t = str(text or "")
@@ -93,14 +84,14 @@ def clean_text(text: str) -> str:
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
+    t = t.replace("\n", " ")
+    t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
-
 
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
-
 
 # -----------------------------
 # MAIN
@@ -166,7 +157,6 @@ def main():
 
     state = load_state()
     today = datetime.now().strftime("%Y%m%d")
-
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
@@ -178,7 +168,7 @@ def main():
         current_row = next((r for r in rows if r["_supplier"] == current_supplier), None)
 
         if current_row:
-            if min_price < current_row["_price"] - SWITCH_THRESHOLD:
+            if min_price < current_row["_price"]:
                 best_row = min_row
             else:
                 best_row = current_row
@@ -210,6 +200,7 @@ def main():
             supplier = r.get("_supplier", "")
             prev_supplier = state.get(ean)
 
+            # TAG SOLO SE CAMBIA FORNITORE
             if prev_supplier != supplier:
                 r["tag"] = f"supplier_change_{supplier}_{today}"
                 state[ean] = supplier
@@ -224,7 +215,6 @@ def main():
     save_state(state)
 
     print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
-
 
 if __name__ == "__main__":
     main()
