@@ -2,11 +2,13 @@ import csv
 import requests
 import io
 import re
+from collections import defaultdict
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
+
 ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
@@ -14,51 +16,45 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
+
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
+
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
+
 
 # -----------------------------
 # Utility
 # -----------------------------
 def detect_delim(text: str) -> str:
     try:
-        sample = text[:8192]
-        d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-        return d.delimiter
+        return csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
     except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first: return "\t"
-        if "|" in first: return "|"
-        if ";" in first and first.count(";") > first.count(","): return ";"
         return ","
 
-def to_int(x, default=0) -> int:
-    try:
-        s = str(x or "").strip()
-        if not s:
-            return default
-        s = s.replace(".", "").replace(",", ".")
-        return int(float(s))
-    except Exception:
-        return default
 
-def to_float(x, default=0.0) -> float:
+def to_int(x):
     try:
-        s = str(x or "").strip()
-        if not s:
-            return default
-        s = s.replace(",", ".")
-        return float(s)
-    except Exception:
-        return default
+        return int(float(str(x).replace(".", "").replace(",", ".")))
+    except:
+        return 0
+
+
+def to_float(x):
+    try:
+        return float(str(x).replace(",", "."))
+    except:
+        return 0.0
+
 
 def supplier_from_sku(sku: str) -> str:
     m = re.search(r"(03[0-9]{2})", sku or "")
     return m.group(1) if m else ""
 
+
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
+
 
 def clean_text(text: str) -> str:
     t = str(text or "")
@@ -66,20 +62,21 @@ def clean_text(text: str) -> str:
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
+
 
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
+
 # -----------------------------
-# Main
+# MAIN
 # -----------------------------
 def main():
-    print("📥 Scarico feed originale...")
+
+    print("📥 Scarico feed...")
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
@@ -94,79 +91,76 @@ def main():
     ]
 
     # -----------------------------
-    # Raggruppamento per EAN
+    # 1️⃣ Raggruppa per EAN
     # -----------------------------
-    ean_groups = {}
+    ean_groups = defaultdict(list)
 
     for r in reader:
+
         try:
-            sku = r.get("sku") or r.get("SKU") or ""
+            sku = r.get("sku") or ""
             supplier = supplier_from_sku(sku)
 
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
 
-            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+            cat1 = norm(r.get("cat1"))
             if cat1 not in ALLOWED_CAT1:
                 continue
 
-            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+            titolo = norm(r.get("titolo_prodotto"))
             if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            qty = to_int(r.get("quantita") or r.get("qty"))
+            qty = to_int(r.get("quantita"))
             if qty < MIN_QTY:
                 continue
 
-            ean = clean_text(r.get("ean") or "")
+            ean = clean_text(r.get("ean"))
             if not valid_ean(ean):
                 continue
 
-            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
-            prezzo = to_float(prezzo_raw)
+            prezzo = to_float(r.get("prezzo_iva_esclusa"))
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
-            row = {k: clean_text(r.get(k) or "") for k in fields}
-
+            row = {k: clean_text(r.get(k)) for k in fields}
             row["quantita"] = qty
-            row["prezzo_iva_esclusa"] = prezzo_raw
+            row["prezzo_iva_esclusa"] = r.get("prezzo_iva_esclusa") or ""
             row["tag"] = f"supplier_{supplier}"
 
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
 
-            ean_groups.setdefault(ean, []).append(row)
+            ean_groups[ean].append(row)
 
-        except Exception:
+        except:
             continue
 
     if not ean_groups:
-        raise Exception("❌ Feed vuoto dopo filtri")
+        raise Exception("❌ Nessun prodotto valido")
 
     # -----------------------------
-    # Scelta migliore per EAN
+    # 2️⃣ Scegli miglior fornitore per EAN
     # -----------------------------
-    best_by_ean = {}
+    best_supplier_by_ean = {}
 
     for ean, rows in ean_groups.items():
 
+        # prezzo minimo
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
+        # controllo 0373
         row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
 
         if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
-            best_row = row_0373
+            best_supplier_by_ean[ean] = row_0373
         else:
-            best_row = min_row
-
-        best_by_ean[ean] = best_row
-
-    print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
+            best_supplier_by_ean[ean] = min_row
 
     # -----------------------------
-    # Scrittura CSV finale
+    # 3️⃣ Scrivi CSV mantenendo tutte le SKU
     # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
 
@@ -180,14 +174,25 @@ def main():
 
         writer.writeheader()
 
-        for r in best_by_ean.values():
+        for ean, rows in ean_groups.items():
 
-            r.pop("_price", None)
-            r.pop("_supplier", None)
+            best = best_supplier_by_ean[ean]
 
-            writer.writerow(r)
+            for r in rows:
 
-    print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
+                out_row = r.copy()
+
+                out_row["quantita"] = best["quantita"]
+                out_row["prezzo_iva_esclusa"] = best["prezzo_iva_esclusa"]
+                out_row["tag"] = best["tag"]
+
+                out_row.pop("_price", None)
+                out_row.pop("_supplier", None)
+
+                writer.writerow(out_row)
+
+    print(f"\n📝 Feed generato: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
