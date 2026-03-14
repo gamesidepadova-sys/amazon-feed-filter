@@ -198,7 +198,7 @@ def main():
 
             # --- LOGICA TAG DI AVVISO ---
             if supplier_sku and supplier_best != supplier_sku:
-                r["tag"] = f"supplier_change_{supplier_best}_{today}"
+                r["tag"] = f"TEST_{today}"
             else:
                 r["tag"] = ""
             # ----------------------------
