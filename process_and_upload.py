@@ -6,6 +6,7 @@ import re
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
+DEBUG_FILE = "debug_suppliers.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
 ALLOWED_CAT1 = {
@@ -57,7 +58,7 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
-# --- NUOVA FUNZIONE CORRETTA ---
+# --- FUNZIONE CORRETTA PER ESTRARRE IL FORNITORE DALLO SKU ---
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").strip().split("_")
     if len(parts) >= 3:
@@ -101,6 +102,13 @@ def main():
     ]
 
     # -----------------------------
+    # CREA FILE DEBUG
+    # -----------------------------
+    with open(DEBUG_FILE, "w", encoding="utf-8", newline="") as dbg:
+        dbg_writer = csv.writer(dbg, delimiter="|")
+        dbg_writer.writerow(["ean", "sku", "supplier_sku", "supplier_best", "price", "tag_expected"])
+
+    # -----------------------------
     # Raggruppamento per EAN
     # -----------------------------
     ean_groups = {}
@@ -134,13 +142,13 @@ def main():
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
-            # Costruzione riga (NON deve cancellare _supplier e _price)
+            # Costruzione riga
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["quantita"] = qty
             row["prezzo_iva_esclusa"] = prezzo_raw
             row["tag"] = ""
 
-            # Campi tecnici che servono dopo
+            # Campi tecnici
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
 
@@ -174,7 +182,7 @@ def main():
     print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
 
     # -----------------------------
-    # Scrittura CSV finale
+    # Scrittura CSV finale + DEBUG
     # -----------------------------
     today = datetime.now().strftime("%Y%m%d")
 
@@ -196,19 +204,31 @@ def main():
             sku_originale = r.get("sku", "")
             supplier_sku = supplier_from_sku(sku_originale)
 
-            # --- LOGICA TAG DI AVVISO ---
+            # --- DEBUG: scrivi su file ---
+            with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
+                dbg_writer = csv.writer(dbg, delimiter="|")
+                dbg_writer.writerow([
+                    ean,
+                    sku_originale,
+                    supplier_sku,
+                    supplier_best,
+                    r["_price"],
+                    "YES" if supplier_sku and supplier_best != supplier_sku else "NO"
+                ])
+
+            # --- LOGICA TAG ---
             if supplier_sku and supplier_best != supplier_sku:
                 r["tag"] = f"supplier_change_{supplier_best}_{today}"
             else:
                 r["tag"] = ""
-            # ----------------------------
 
             r.pop("_price", None)
             r.pop("_supplier", None)
 
             writer.writerow(r)
 
-    print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
+    print(f"\n📝 Feed generato: {OUTPUT_FILE}")
+    print(f"📝 Debug generato: {DEBUG_FILE}")
 
 if __name__ == "__main__":
     main()
