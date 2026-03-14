@@ -57,9 +57,12 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
+# NUOVA FUNZIONE CORRETTA
 def supplier_from_sku(sku: str) -> str:
-    m = re.search(r"(03[0-9]{2})", sku or "")
-    return m.group(1) if m else ""
+    parts = (sku or "").strip().split("_")
+    if len(parts) >= 3:
+        return parts[1]
+    return ""
 
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
