@@ -29,13 +29,6 @@ def detect_delim(text: str) -> str:
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
     except Exception:
-        first = text.splitlines()[0] if text else ""
-        if "\t" in first:
-            return "\t"
-        if "|" in first:
-            return "|"
-        if ";" in first and first.count(";") > first.count(","):
-            return ";"
         return ","
 
 def to_int(x, default=0) -> int:
@@ -58,7 +51,7 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
-# --- FUNZIONE CORRETTA PER ESTRARRE IL FORNITORE DALLO SKU ---
+# 🔥 ESTRAZIONE CORRETTA FORNITORE DA SKU (T_0382_...)
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").strip().split("_")
     if len(parts) >= 3:
@@ -84,7 +77,7 @@ def valid_ean(ean: str) -> bool:
     return e.isdigit() and 8 <= len(e) <= 14
 
 # -----------------------------
-# Main
+# MAIN
 # -----------------------------
 def main():
     print("📥 Scarico feed originale...")
@@ -102,14 +95,17 @@ def main():
     ]
 
     # -----------------------------
-    # CREA FILE DEBUG
+    # CREA DEBUG FILE
     # -----------------------------
     with open(DEBUG_FILE, "w", encoding="utf-8", newline="") as dbg:
         dbg_writer = csv.writer(dbg, delimiter="|")
-        dbg_writer.writerow(["ean", "sku", "supplier_sku", "supplier_best", "price", "tag_expected"])
+        dbg_writer.writerow([
+            "ean","sku_originale","supplier_sku",
+            "supplier_best","price","tag_created"
+        ])
 
     # -----------------------------
-    # Raggruppamento per EAN
+    # RAGGRUPPAMENTO PER EAN
     # -----------------------------
     ean_groups = {}
 
@@ -137,21 +133,15 @@ def main():
             if not valid_ean(ean):
                 continue
 
-            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
-            prezzo = to_float(prezzo_raw)
+            prezzo = to_float(r.get("prezzo_iva_esclusa"))
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
-            # Costruzione riga
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["_original_sku"] = sku
-            row["quantita"] = qty
-            row["prezzo_iva_esclusa"] = prezzo_raw
-            row["tag"] = ""
-
-            # Campi tecnici
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
+            row["tag"] = ""
 
             ean_groups.setdefault(ean, []).append(row)
 
@@ -162,7 +152,7 @@ def main():
         raise Exception("❌ Feed vuoto dopo filtri")
 
     # -----------------------------
-    # Scelta migliore per EAN
+    # SCELTA MIGLIORE PER EAN
     # -----------------------------
     best_by_ean = {}
 
@@ -180,10 +170,8 @@ def main():
 
         best_by_ean[ean] = best_row
 
-    print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
-
     # -----------------------------
-    # Scrittura CSV finale + DEBUG
+    # SCRITTURA FILE FINALE
     # -----------------------------
     today = datetime.now().strftime("%Y%m%d")
 
@@ -201,16 +189,19 @@ def main():
 
         for ean, r in best_by_ean.items():
 
-        supplier_best = r["_supplier"]
-        sku_originale = r["_original_sku"]
-        supplier_sku = supplier_from_sku(sku_originale)
+            supplier_best = r["_supplier"]
+            sku_originale = r["_original_sku"]
+            supplier_sku = supplier_from_sku(sku_originale)
 
-        if supplier_sku and supplier_best != supplier_sku:
-            r["tag"] = f"supplier_change_{supplier_best}_{today}"
-        else:
-            r["tag"] = ""
+            tag_created = ""
 
-            # --- DEBUG: scrivi su file ---
+            if supplier_sku and supplier_best != supplier_sku:
+                tag_created = f"supplier_change_{supplier_best}_{today}"
+                r["tag"] = tag_created
+            else:
+                r["tag"] = ""
+
+            # Debug log
             with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
                 dbg_writer = csv.writer(dbg, delimiter="|")
                 dbg_writer.writerow([
@@ -219,14 +210,8 @@ def main():
                     supplier_sku,
                     supplier_best,
                     r["_price"],
-                    "YES" if supplier_sku and supplier_best != supplier_sku else "NO"
+                    tag_created
                 ])
-
-            # --- LOGICA TAG ---
-            if supplier_sku and supplier_best != supplier_sku:
-                r["tag"] = f"supplier_change_{supplier_best}_{today}"
-            else:
-                r["tag"] = ""
 
             r.pop("_price", None)
             r.pop("_supplier", None)
