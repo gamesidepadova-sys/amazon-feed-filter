@@ -1,4 +1,4 @@
-from datetime import datetim
+from datetime import datetime
 import csv
 import requests
 import io
