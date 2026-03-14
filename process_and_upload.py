@@ -230,8 +230,10 @@ def main():
                     tag_created
                 ])
 
+            # RIMUOVI CAMPI TECNICI
             r.pop("_price", None)
             r.pop("_supplier", None)
+            r.pop("_original_sku", None)
 
             writer.writerow(r)
 
