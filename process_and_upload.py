@@ -207,3 +207,16 @@ def main():
 
 if __name__ == "__main__":
     main()
+sku = r.get("sku", "")
+supplier_sku = supplier_from_sku(sku)
+supplier_best = r["_supplier"]
+
+print("SKU:", sku)
+print("supplier_sku:", supplier_sku)
+print("supplier_best:", supplier_best)
+print("----")
+
+if supplier_best != supplier_sku:
+    r["tag"] = "TAG_TEST"
+else:
+    r["tag"] = ""
