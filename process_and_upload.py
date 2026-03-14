@@ -6,7 +6,6 @@ import re
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
-DEBUG_FILE = "debug_suppliers.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
 ALLOWED_CAT1 = {
@@ -20,7 +19,7 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
-# PESO USATO PER IDENTIFICARE IL FORNITORE VINCENTE
+# Peso per identificare il fornitore vincente
 SUPPLIER_WEIGHT = {
     "0372": 99.72,
     "0373": 99.73,
@@ -82,68 +81,19 @@ def main():
     text = resp.content.decode("utf-8-sig", errors="replace")
 
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
-
     reader.fieldnames = [name.replace("\ufeff", "") for name in reader.fieldnames]
 
     fields = [
         "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
         "titolo_prodotto","immagine_principale","descrizione_prodotto",
-        "costo_spedizione","cat2","cat3","marca","peso","tag"
+        "costo_spedizione","cat2","cat3","marca","peso"
     ]
 
     rows_raw = list(reader)
 
-    count_total = len(rows_raw)
-    count_supplier = 0
-    count_cat1 = 0
-    count_title = 0
-    count_qty = 0
-    count_ean = 0
-
-    for r in rows_raw:
-        sku = r.get("sku") or ""
-        supplier = supplier_from_sku(sku)
-        if supplier not in ALLOWED_SUPPLIERS:
-            continue
-        count_supplier += 1
-
-        cat1 = norm(r.get("cat1") or r.get("categoria") or "")
-        if cat1 not in ALLOWED_CAT1:
-            continue
-        count_cat1 += 1
-
-        titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
-        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
-            continue
-        count_title += 1
-
-        qty = to_int(r.get("quantita") or r.get("qty"))
-        if qty < MIN_QTY:
-            continue
-        count_qty += 1
-
-        ean = clean_text(r.get("ean") or "")
-        if not valid_ean(ean):
-            continue
-        count_ean += 1
-
-    print("\n📊 DIAGNOSTICA FILTRI")
-    print("Totale righe feed:", count_total)
-    print("Dopo filtro supplier:", count_supplier)
-    print("Dopo filtro cat1:", count_cat1)
-    print("Dopo filtro titolo:", count_title)
-    print("Dopo filtro qty:", count_qty)
-    print("Dopo filtro ean:", count_ean)
-
-    if count_ean == 0:
-        raise Exception("❌ Feed vuoto dopo filtri — controlla la diagnostica sopra")
-
-    with open(DEBUG_FILE, "w", encoding="utf-8", newline="") as dbg:
-        dbg_writer = csv.writer(dbg, delimiter="|")
-        dbg_writer.writerow([
-            "ean","sku_originale","supplier_sku",
-            "supplier_best","price","tag_created"
-        ])
+    # ==========================
+    # RAGGRUPPAMENTO PER EAN
+    # ==========================
 
     ean_groups = {}
 
@@ -179,16 +129,20 @@ def main():
             row["_original_sku"] = sku
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
-            row["tag"] = ""
 
             ean_groups.setdefault(ean, []).append(row)
 
         except:
             continue
 
+    # ==========================
+    # SCELTA MIGLIORE PER EAN
+    # ==========================
+
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
+
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
@@ -201,10 +155,18 @@ def main():
 
         best_by_ean[ean] = best_row
 
-    today = datetime.now().strftime("%Y%m%d")
+    # ==========================
+    # SCRITTURA FILE FINALE
+    # ==========================
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-        writer = csv.DictWriter(out, fieldnames=fields, delimiter="|", quoting=csv.QUOTE_NONE, escapechar="\\")
+        writer = csv.DictWriter(
+            out,
+            fieldnames=fields,
+            delimiter="|",
+            quoting=csv.QUOTE_NONE,
+            escapechar="\\"
+        )
 
         writer.writeheader()
 
@@ -212,12 +174,18 @@ def main():
 
             supplier_best = r["_supplier"]
 
-            # PESO IDENTIFICA FORNITORE VINCENTE
-            r["peso"] = SUPPLIER_WEIGHT.get(supplier_best, r.get("peso", ""))
+            # ==========================
+            # NUOVA LOGICA PESO 24XXXXX
+            # ==========================
 
-            sku_originale = r["_original_sku"]
-            supplier_sku = supplier_from_sku(sku_originale)
+            peso_val = SUPPLIER_WEIGHT.get(supplier_best)
 
+            if peso_val is not None:
+                r["peso"] = "24" + str(int(round(float(peso_val) * 100)))
+            else:
+                r["peso"] = "24"
+
+            # pulizia campi tecnici
             r.pop("_price", None)
             r.pop("_supplier", None)
             r.pop("_original_sku", None)
@@ -225,7 +193,6 @@ def main():
             writer.writerow(r)
 
     print(f"\n📝 Feed generato: {OUTPUT_FILE}")
-    print(f"📝 Debug generato: {DEBUG_FILE}")
 
 if __name__ == "__main__":
     main()
