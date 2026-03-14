@@ -131,11 +131,13 @@ def main():
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
+            # Costruzione riga (NON deve cancellare _supplier e _price)
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["quantita"] = qty
             row["prezzo_iva_esclusa"] = prezzo_raw
             row["tag"] = ""
 
+            # Campi tecnici che servono dopo
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
 
@@ -191,12 +193,12 @@ def main():
             sku_originale = r.get("sku", "")
             supplier_sku = supplier_from_sku(sku_originale)
 
-            # --- LOGICA TAG DI AVVISO (FINALMENTE NEL PUNTO GIUSTO) ---
+            # --- LOGICA TAG DI AVVISO ---
             if supplier_sku and supplier_best != supplier_sku:
                 r["tag"] = f"supplier_change_{supplier_best}_{today}"
             else:
                 r["tag"] = ""
-            # -----------------------------------------------------------
+            # ----------------------------
 
             r.pop("_price", None)
             r.pop("_supplier", None)
