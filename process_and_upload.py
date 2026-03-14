@@ -8,7 +8,6 @@ INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
-
 ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
@@ -16,24 +15,27 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-
 EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
-
 # -----------------------------
 # Utility
 # -----------------------------
-
 def detect_delim(text: str) -> str:
     try:
         sample = text[:8192]
         d = csv.Sniffer().sniff(sample, delimiters=",;\t|")
         return d.delimiter
     except Exception:
+        first = text.splitlines()[0] if text else ""
+        if "\t" in first:
+            return "\t"
+        if "|" in first:
+            return "|"
+        if ";" in first and first.count(";") > first.count(","):
+            return ";"
         return ","
-
 
 def to_int(x, default=0) -> int:
     try:
@@ -45,7 +47,6 @@ def to_int(x, default=0) -> int:
     except Exception:
         return default
 
-
 def to_float(x, default=0.0) -> float:
     try:
         s = str(x or "").strip()
@@ -56,20 +57,12 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
-
-# SKU formato: S_0380_XXXX
 def supplier_from_sku(sku: str) -> str:
-    if not sku:
-        return ""
-    parts = sku.split("_")
-    if len(parts) >= 2:
-        return parts[1]
-    return ""
-
+    m = re.search(r"(03[0-9]{2})", sku or "")
+    return m.group(1) if m else ""
 
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
-
 
 def clean_text(text: str) -> str:
     t = str(text or "")
@@ -77,21 +70,19 @@ def clean_text(text: str) -> str:
     t = t.replace("&nbsp;", " ")
     t = t.replace('"', "")
     t = t.replace("|", " ")
+    t = t.replace("\n", " ")
+    t = t.replace("\r", " ")
     t = re.sub(" +", " ", t)
     return t.strip()
-
 
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
-
 # -----------------------------
-# MAIN
+# Main
 # -----------------------------
-
 def main():
-
     print("📥 Scarico feed originale...")
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
@@ -106,14 +97,14 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
 
+    # -----------------------------
+    # Raggruppamento per EAN
+    # -----------------------------
     ean_groups = {}
 
-    # -----------------------------
-    # FILTRI + RAGGRUPPAMENTO
-    # -----------------------------
     for r in reader:
         try:
-            sku = r.get("sku") or ""
+            sku = r.get("sku") or r.get("SKU") or ""
             supplier = supplier_from_sku(sku)
 
             if supplier not in ALLOWED_SUPPLIERS:
@@ -135,12 +126,14 @@ def main():
             if not valid_ean(ean):
                 continue
 
-            prezzo = to_float(r.get("prezzo_iva_esclusa"))
+            prezzo_raw = r.get("prezzo_iva_esclusa") or ""
+            prezzo = to_float(prezzo_raw)
             spedizione = to_float(r.get("costo_spedizione"))
             prezzo_totale = prezzo + spedizione
 
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["quantita"] = qty
+            row["prezzo_iva_esclusa"] = prezzo_raw
             row["tag"] = ""
 
             row["_price"] = prezzo_totale
@@ -155,7 +148,7 @@ def main():
         raise Exception("❌ Feed vuoto dopo filtri")
 
     # -----------------------------
-    # SCELTA MIGLIOR FORNITORE PER EAN
+    # Scelta migliore per EAN
     # -----------------------------
     best_by_ean = {}
 
@@ -175,11 +168,11 @@ def main():
 
     print(f"\n📦 Prodotti finali: {len(best_by_ean)}")
 
+    # -----------------------------
+    # Scrittura CSV finale
+    # -----------------------------
     today = datetime.now().strftime("%Y%m%d")
 
-    # -----------------------------
-    # SCRITTURA FILE FINALE
-    # -----------------------------
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
 
         writer = csv.DictWriter(
@@ -198,11 +191,12 @@ def main():
             sku_originale = r.get("sku", "")
             supplier_sku = supplier_from_sku(sku_originale)
 
-            # TAG SOLO SE DIVERSO DALLO SKU
+            # --- LOGICA TAG DI AVVISO ---
             if supplier_sku and supplier_best != supplier_sku:
                 r["tag"] = f"supplier_change_{supplier_best}_{today}"
             else:
                 r["tag"] = ""
+            # ----------------------------
 
             r.pop("_price", None)
             r.pop("_supplier", None)
@@ -210,7 +204,6 @@ def main():
             writer.writerow(r)
 
     print(f"\n📝 Feed generato correttamente: {OUTPUT_FILE}")
-
 
 if __name__ == "__main__":
     main()
