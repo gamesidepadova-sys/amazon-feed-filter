@@ -144,6 +144,7 @@ def main():
 
             # Costruzione riga
             row = {k: clean_text(r.get(k) or "") for k in fields}
+            row["_original_sku"] = sku
             row["quantita"] = qty
             row["prezzo_iva_esclusa"] = prezzo_raw
             row["tag"] = ""
@@ -200,9 +201,14 @@ def main():
 
         for ean, r in best_by_ean.items():
 
-            supplier_best = r["_supplier"]
-            sku_originale = r.get("sku", "")
-            supplier_sku = supplier_from_sku(sku_originale)
+        supplier_best = r["_supplier"]
+        sku_originale = r["_original_sku"]
+        supplier_sku = supplier_from_sku(sku_originale)
+
+        if supplier_sku and supplier_best != supplier_sku:
+            r["tag"] = f"supplier_change_{supplier_best}_{today}"
+        else:
+            r["tag"] = ""
 
             # --- DEBUG: scrivi su file ---
             with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
