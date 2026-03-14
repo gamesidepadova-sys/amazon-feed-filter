@@ -20,6 +20,17 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
+# PESO USATO PER IDENTIFICARE IL FORNITORE VINCENTE
+SUPPLIER_WEIGHT = {
+    "0372": 99.72,
+    "0373": 99.73,
+    "0374": 99.74,
+    "0380": 99.80,
+    "0381": 99.81,
+    "0382": 99.82,
+    "0383": 99.83
+}
+
 def to_int(x, default=0):
     try:
         s = str(x or "").strip()
@@ -70,10 +81,8 @@ def main():
     resp.raise_for_status()
     text = resp.content.decode("utf-8-sig", errors="replace")
 
-    # Forziamo il delimitatore corretto
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
 
-    # FIX: rimuove BOM dal nome della prima colonna
     reader.fieldnames = [name.replace("\ufeff", "") for name in reader.fieldnames]
 
     fields = [
@@ -82,7 +91,6 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
 
-    # DIAGNOSTICA
     rows_raw = list(reader)
 
     count_total = len(rows_raw)
@@ -130,7 +138,6 @@ def main():
     if count_ean == 0:
         raise Exception("❌ Feed vuoto dopo filtri — controlla la diagnostica sopra")
 
-    # CREA DEBUG
     with open(DEBUG_FILE, "w", encoding="utf-8", newline="") as dbg:
         dbg_writer = csv.writer(dbg, delimiter="|")
         dbg_writer.writerow([
@@ -138,7 +145,6 @@ def main():
             "supplier_best","price","tag_created"
         ])
 
-    # RAGGRUPPAMENTO PER EAN
     ean_groups = {}
 
     for r in rows_raw:
@@ -180,7 +186,6 @@ def main():
         except:
             continue
 
-    # SCELTA MIGLIORE PER EAN
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
@@ -196,7 +201,6 @@ def main():
 
         best_by_ean[ean] = best_row
 
-    # SCRITTURA FILE FINALE
     today = datetime.now().strftime("%Y%m%d")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
@@ -207,6 +211,10 @@ def main():
         for ean, r in best_by_ean.items():
 
             supplier_best = r["_supplier"]
+
+            # PESO IDENTIFICA FORNITORE VINCENTE
+            r["peso"] = SUPPLIER_WEIGHT.get(supplier_best, r.get("peso", ""))
+
             sku_originale = r["_original_sku"]
             supplier_sku = supplier_from_sku(sku_originale)
 
@@ -218,7 +226,6 @@ def main():
             else:
                 r["tag"] = ""
 
-            # DEBUG
             with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
                 dbg_writer = csv.writer(dbg, delimiter="|")
                 dbg_writer.writerow([
@@ -230,7 +237,6 @@ def main():
                     tag_created
                 ])
 
-            # RIMUOVI CAMPI TECNICI
             r.pop("_price", None)
             r.pop("_supplier", None)
             r.pop("_original_sku", None)
