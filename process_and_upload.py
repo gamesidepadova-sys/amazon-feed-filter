@@ -57,7 +57,7 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
-# NUOVA FUNZIONE CORRETTA
+# --- NUOVA FUNZIONE CORRETTA ---
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").strip().split("_")
     if len(parts) >= 3:
@@ -198,7 +198,7 @@ def main():
 
             # --- LOGICA TAG DI AVVISO ---
             if supplier_sku and supplier_best != supplier_sku:
-                r["tag"] = f"TEST_{today}"
+                r["tag"] = f"supplier_change_{supplier_best}_{today}"
             else:
                 r["tag"] = ""
             # ----------------------------
