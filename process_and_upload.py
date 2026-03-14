@@ -87,7 +87,65 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
 
-    # CREA DEBUG
+    # -----------------------------
+    # DIAGNOSTICA FILTRI
+    # -----------------------------
+    count_total = 0
+    count_supplier = 0
+    count_cat1 = 0
+    count_title = 0
+    count_qty = 0
+    count_ean = 0
+
+    # dobbiamo ri-leggere il feed due volte → salviamo le righe
+    rows_raw = list(reader)
+
+    for r in rows_raw:
+        count_total += 1
+
+        sku = r.get("sku") or r.get("SKU") or ""
+        supplier = supplier_from_sku(sku)
+        if supplier not in ALLOWED_SUPPLIERS:
+            continue
+        count_supplier += 1
+
+        cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+        if cat1 not in ALLOWED_CAT1:
+            continue
+        count_cat1 += 1
+
+        titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+            continue
+        count_title += 1
+
+        qty = to_int(r.get("quantita") or r.get("qty"))
+        if qty < MIN_QTY:
+            continue
+        count_qty += 1
+
+        ean = clean_text(r.get("ean") or "")
+        if not valid_ean(ean):
+            continue
+        count_ean += 1
+
+    print("\n📊 DIAGNOSTICA FILTRI")
+    print("Totale righe feed:", count_total)
+    print("Dopo filtro supplier:", count_supplier)
+    print("Dopo filtro cat1:", count_cat1)
+    print("Dopo filtro titolo:", count_title)
+    print("Dopo filtro qty:", count_qty)
+    print("Dopo filtro ean:", count_ean)
+
+    # -----------------------------
+    # SE TUTTO È VUOTO → STOP QUI
+    # -----------------------------
+    if count_ean == 0:
+        raise Exception("❌ Feed vuoto dopo filtri — guarda la diagnostica sopra")
+
+    # -----------------------------
+    # CREA DEBUG FILE
+    # -----------------------------
     with open(DEBUG_FILE, "w", encoding="utf-8", newline="") as dbg:
         dbg_writer = csv.writer(dbg, delimiter="|")
         dbg_writer.writerow([
@@ -95,9 +153,12 @@ def main():
             "supplier_best","price","tag_created"
         ])
 
+    # -----------------------------
+    # RAGGRUPPAMENTO PER EAN
+    # -----------------------------
     ean_groups = {}
 
-    for r in reader:
+    for r in rows_raw:
         try:
             sku = r.get("sku") or r.get("SKU") or ""
             supplier = supplier_from_sku(sku)
@@ -136,9 +197,9 @@ def main():
         except Exception:
             continue
 
-    if not ean_groups:
-        raise Exception("❌ Feed vuoto dopo filtri")
-
+    # -----------------------------
+    # SCELTA MIGLIORE PER EAN
+    # -----------------------------
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
@@ -154,10 +215,20 @@ def main():
 
         best_by_ean[ean] = best_row
 
+    # -----------------------------
+    # SCRITTURA FILE FINALE
+    # -----------------------------
     today = datetime.now().strftime("%Y%m%d")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-        writer = csv.DictWriter(out, fieldnames=fields, delimiter="|", quoting=csv.QUOTE_NONE, escapechar="\\")
+
+        writer = csv.DictWriter(
+            out,
+            fieldnames=fields,
+            delimiter="|",
+            quoting=csv.QUOTE_NONE,
+            escapechar="\\"
+        )
 
         writer.writeheader()
 
@@ -175,7 +246,7 @@ def main():
             else:
                 r["tag"] = ""
 
-            # DEBUG
+            # Debug log
             with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
                 dbg_writer = csv.writer(dbg, delimiter="|")
                 dbg_writer.writerow([
