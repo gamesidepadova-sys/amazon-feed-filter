@@ -20,9 +20,6 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
-# -----------------------------
-# Utility
-# -----------------------------
 def detect_delim(text: str) -> str:
     try:
         sample = text[:8192]
@@ -51,7 +48,6 @@ def to_float(x, default=0.0) -> float:
     except Exception:
         return default
 
-# 🔥 ESTRAZIONE CORRETTA FORNITORE DA SKU (T_0382_...)
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").strip().split("_")
     if len(parts) >= 3:
@@ -76,9 +72,6 @@ def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
 
-# -----------------------------
-# MAIN
-# -----------------------------
 def main():
     print("📥 Scarico feed originale...")
     resp = requests.get(INPUT_URL)
@@ -94,9 +87,7 @@ def main():
         "costo_spedizione","cat2","cat3","marca","peso","tag"
     ]
 
-    # -----------------------------
-    # CREA DEBUG FILE
-    # -----------------------------
+    # CREA DEBUG
     with open(DEBUG_FILE, "w", encoding="utf-8", newline="") as dbg:
         dbg_writer = csv.writer(dbg, delimiter="|")
         dbg_writer.writerow([
@@ -104,9 +95,6 @@ def main():
             "supplier_best","price","tag_created"
         ])
 
-    # -----------------------------
-    # RAGGRUPPAMENTO PER EAN
-    # -----------------------------
     ean_groups = {}
 
     for r in reader:
@@ -151,13 +139,9 @@ def main():
     if not ean_groups:
         raise Exception("❌ Feed vuoto dopo filtri")
 
-    # -----------------------------
-    # SCELTA MIGLIORE PER EAN
-    # -----------------------------
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
-
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
@@ -170,20 +154,10 @@ def main():
 
         best_by_ean[ean] = best_row
 
-    # -----------------------------
-    # SCRITTURA FILE FINALE
-    # -----------------------------
     today = datetime.now().strftime("%Y%m%d")
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-
-        writer = csv.DictWriter(
-            out,
-            fieldnames=fields,
-            delimiter="|",
-            quoting=csv.QUOTE_NONE,
-            escapechar="\\"
-        )
+        writer = csv.DictWriter(out, fieldnames=fields, delimiter="|", quoting=csv.QUOTE_NONE, escapechar="\\")
 
         writer.writeheader()
 
@@ -201,7 +175,7 @@ def main():
             else:
                 r["tag"] = ""
 
-            # Debug log
+            # DEBUG
             with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
                 dbg_writer = csv.writer(dbg, delimiter="|")
                 dbg_writer.writerow([
