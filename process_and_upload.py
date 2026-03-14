@@ -196,6 +196,8 @@ def main():
             sku_originale = r.get("sku", "")
             supplier_sku = supplier_from_sku(sku_originale)
 
+            print("EAN:", ean, "| SKU:", sku_originale, "| supplier_sku:", supplier_sku, "| supplier_best:", supplier_best)
+
             # --- LOGICA TAG DI AVVISO ---
             if supplier_sku and supplier_best != supplier_sku:
                 r["tag"] = f"supplier_change_{supplier_best}_{today}"
