@@ -218,25 +218,6 @@ def main():
             sku_originale = r["_original_sku"]
             supplier_sku = supplier_from_sku(sku_originale)
 
-            tag_created = ""
-
-            if supplier_sku and supplier_best != supplier_sku:
-                tag_created = f"supplier_change_{supplier_best}_{today}"
-                r["tag"] = tag_created
-            else:
-                r["tag"] = ""
-
-            with open(DEBUG_FILE, "a", encoding="utf-8", newline="") as dbg:
-                dbg_writer = csv.writer(dbg, delimiter="|")
-                dbg_writer.writerow([
-                    ean,
-                    sku_originale,
-                    supplier_sku,
-                    supplier_best,
-                    r["_price"],
-                    tag_created
-                ])
-
             r.pop("_price", None)
             r.pop("_supplier", None)
             r.pop("_original_sku", None)
