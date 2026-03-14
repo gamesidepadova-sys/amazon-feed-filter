@@ -191,12 +191,12 @@ def main():
             sku_originale = r.get("sku", "")
             supplier_sku = supplier_from_sku(sku_originale)
 
-            # --- LOGICA TAG DI AVVISO ---
+            # --- LOGICA TAG DI AVVISO (FINALMENTE NEL PUNTO GIUSTO) ---
             if supplier_sku and supplier_best != supplier_sku:
                 r["tag"] = f"supplier_change_{supplier_best}_{today}"
             else:
                 r["tag"] = ""
-            # ----------------------------
+            # -----------------------------------------------------------
 
             r.pop("_price", None)
             r.pop("_supplier", None)
