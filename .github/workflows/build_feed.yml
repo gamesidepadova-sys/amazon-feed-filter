@@ -1,7 +1,6 @@
 name: Build Feed (Force Upload Definitivo)
 
 env:
-  # forza Node.js 24 per tutte le Actions
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
@@ -31,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib
+          pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib pandas
 
       # 4️⃣ Service account JSON
       - name: Prepare Google service account JSON
@@ -49,11 +48,31 @@ jobs:
           print("✅ Service account JSON valido")
           EOF
 
-      # 6️⃣ Genera feed
+      # 6️⃣ Scarica snapshot precedente (se esiste)
+      - name: Download snapshot artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: daily-snapshot
+          path: daily_snapshots
+        continue-on-error: true
+
+      - name: Verifica snapshot
+        run: |
+          echo "📁 Contenuto snapshot:"
+          ls -l daily_snapshots || true
+
+      # 7️⃣ Genera feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # 7️⃣ Controllo se il feed è cambiato
+      # 8️⃣ Carica snapshot aggiornato
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-snapshot
+          path: daily_snapshots
+
+      # 9️⃣ Controllo se il feed è cambiato
       - name: Check if feed changed
         id: feedcheck
         run: |
@@ -64,7 +83,7 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      # 8️⃣ Upload su Google Drive solo se cambiato
+      # 🔟 Upload su Google Drive solo se cambiato
       - name: Upload feed to Google Drive
         if: steps.feedcheck.outputs.changed == 'true'
         env:
@@ -90,7 +109,7 @@ jobs:
           print("✅ File aggiornato su Google Drive")
           EOF
 
-      # 9️⃣ Commit feed solo se cambiato
+      # 1️⃣1️⃣ Commit feed solo se cambiato
       - name: Commit feed only if changed
         if: steps.feedcheck.outputs.changed == 'true'
         run: |
