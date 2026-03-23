@@ -50,13 +50,16 @@ def is_first_run_today():
     expected = f"snapshot_{today}.csv"
     return expected not in os.listdir(DAILY_DIR)
 
+def no_snapshot_exists_yet():
+    return len(os.listdir(DAILY_DIR)) == 0
+
 def save_daily_snapshot(df):
     today = date.today().isoformat()
     df.to_csv(f"{DAILY_DIR}/snapshot_{today}.csv", index=False)
 
 def load_yesterday_snapshot():
     files = sorted(os.listdir(DAILY_DIR))
-    if len(files) < 1:
+    if not files:
         return None
     return pd.read_csv(f"{DAILY_DIR}/{files[-1]}")
 
@@ -256,14 +259,20 @@ def main():
     today_df = detect_new(today_df, yesterday_df)
     today_df = detect_stock_trend(today_df, yesterday_df)
 
-    if is_first_run_today():
+    # --- LOGICA DEFINITIVA ---
+    if no_snapshot_exists_yet():
+        print("🟡 Nessuno snapshot precedente → salvo snapshot base senza tag")
+        today_df["tag"] = ""
+        save_daily_snapshot(today_df)
+
+    elif is_first_run_today():
         print("🟢 Primo run del giorno → assegno i tag")
         today_df = apply_tags(today_df)
-    else:
-        print("⚪ Run successivo → niente tag")
-        today_df["tag"] = ""
+        save_daily_snapshot(today_df)
 
-    save_daily_snapshot(today_df)
+    else:
+        print("⚪ Run successivo → niente tag, niente snapshot")
+        today_df["tag"] = ""
 
     # =========================================================
     # SCRITTURA FILE FINALE
