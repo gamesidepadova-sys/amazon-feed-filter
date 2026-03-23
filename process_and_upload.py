@@ -300,9 +300,10 @@ def main():
                 r["peso"] = "24"
 
             r = r.to_dict()
-            r.pop("_price", None)
-            r.pop("_supplier", None)
-            r.pop("_original_sku", None)
+
+            # Rimuovi colonne tecniche
+            for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend"]:
+                r.pop(col, None)
 
             writer.writerow(r)
 
