@@ -5,7 +5,7 @@ env:
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/30 * * * *"  # ogni 30 minuti
   workflow_dispatch:
 
 permissions:
@@ -16,43 +16,40 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # 3️⃣ Installa dipendenze
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib pandas
 
-      # Determina se è la prima run del giorno
-      - name: Determine if first run of the day
-        id: daterun
+      # 4️⃣ Service account JSON
+      - name: Prepare Google service account JSON
         run: |
-          TODAY=$(date +'%Y-%m-%d')
-          echo "TODAY=$TODAY" >> $GITHUB_ENV
+          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
+          echo "✅ Service account JSON pronto"
 
-          if [ -f last_run_date.txt ]; then
-            LAST=$(cat last_run_date.txt)
-          else
-            LAST="none"
-          fi
+      # 5️⃣ Validazione JSON
+      - name: Validate service account JSON
+        run: |
+          python3 - << 'EOF'
+          import json
+          with open("sa.json") as f:
+              json.load(f)
+          print("✅ Service account JSON valido")
+          EOF
 
-          echo "LAST_RUN_DATE=$LAST" >> $GITHUB_ENV
-
-          if [ "$TODAY" != "$LAST" ]; then
-            echo "first_run=true" >> $GITHUB_OUTPUT
-          else
-            echo "first_run=false" >> $GITHUB_OUTPUT
-          fi
-
-      # Scarica snapshot SOLO nella prima run del giorno
+      # 6️⃣ Scarica snapshot precedente (se esiste)
       - name: Download snapshot artifact
-        if: steps.daterun.outputs.first_run == 'true'
         uses: actions/download-artifact@v4
         with:
           name: daily-snapshot
@@ -64,28 +61,18 @@ jobs:
           echo "📁 Contenuto snapshot:"
           ls -l daily_snapshots || true
 
+      # 7️⃣ Genera feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # Carica snapshot SOLO nella prima run del giorno
+      # 8️⃣ Carica snapshot aggiornato
       - name: Upload snapshot artifact
-        if: steps.daterun.outputs.first_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: daily-snapshot
           path: daily_snapshots
 
-      # Aggiorna last_run_date SOLO nella prima run del giorno
-      - name: Update last_run_date
-        if: steps.daterun.outputs.first_run == 'true'
-        run: |
-          echo "$TODAY" > last_run_date.txt
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add last_run_date.txt
-          git commit -m "Update last run date" || true
-          git push
-
+      # 9️⃣ Controllo se il feed è cambiato
       - name: Check if feed changed
         id: feedcheck
         run: |
@@ -96,12 +83,7 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
-      # Ricrea SEMPRE sa.json prima dell’upload su Drive
-      - name: Prepare Google service account JSON
-        run: |
-          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
-          echo "✅ Service account JSON pronto"
-
+      # 🔟 Upload su Google Drive solo se cambiato
       - name: Upload feed to Google Drive
         if: steps.feedcheck.outputs.changed == 'true'
         env:
@@ -127,11 +109,12 @@ jobs:
           print("✅ File aggiornato su Google Drive")
           EOF
 
+      # 1️⃣1️⃣ Commit feed solo se cambiato
       - name: Commit feed only if changed
         if: steps.feedcheck.outputs.changed == 'true'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add feed_poleepo.csv
-          git commit -m "Update feed" || echo "Nessuna modifica"
+          git commit -m "Update feed" || echo "✅ Nessuna modifica da commit"
           git push
