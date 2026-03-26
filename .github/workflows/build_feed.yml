@@ -1,4 +1,4 @@
-name: Build Feed (Definitiva)
+name: Build Feed (Force Upload Definitivo)
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
