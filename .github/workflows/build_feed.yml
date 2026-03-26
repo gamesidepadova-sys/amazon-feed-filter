@@ -50,9 +50,15 @@ jobs:
             echo "first_run=false" >> $GITHUB_OUTPUT
           fi
 
-      # Scarica snapshot SOLO nella prima run del giorno
-      - name: Skip snapshot download (temporary)
-        run: echo "Skipping snapshot download"
+      # 🔥 RIPRISTINATO: scarica snapshot di ieri dagli artifact
+      # Forzato SOLO per questa run perché la cartella è vuota
+      - name: Download snapshot artifact
+        if: true
+        uses: actions/download-artifact@v4
+        with:
+          name: daily-snapshot
+          path: daily_snapshots
+        continue-on-error: true
 
       - name: Verifica snapshot
         run: |
