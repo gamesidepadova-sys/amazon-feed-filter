@@ -29,7 +29,7 @@ jobs:
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib pandas
 
-      # Determina se è il primo run del giorno
+      # Determina se è la prima run del giorno
       - name: Determine if first run of the day
         id: daterun
         run: |
@@ -50,7 +50,7 @@ jobs:
             echo "first_run=false" >> $GITHUB_OUTPUT
           fi
 
-      # Scarica snapshot SOLO nel primo run del giorno
+      # Scarica snapshot SOLO nella prima run del giorno
       - name: Download snapshot artifact
         if: steps.daterun.outputs.first_run == 'true'
         uses: actions/download-artifact@v4
@@ -67,7 +67,7 @@ jobs:
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # Carica snapshot SOLO nel primo run del giorno
+      # Carica snapshot SOLO nella prima run del giorno
       - name: Upload snapshot artifact
         if: steps.daterun.outputs.first_run == 'true'
         uses: actions/upload-artifact@v4
@@ -75,7 +75,7 @@ jobs:
           name: daily-snapshot
           path: daily_snapshots
 
-      # Aggiorna last_run_date.txt SOLO nel primo run del giorno
+      # Aggiorna last_run_date SOLO nella prima run del giorno
       - name: Update last_run_date
         if: steps.daterun.outputs.first_run == 'true'
         run: |
@@ -95,6 +95,12 @@ jobs:
           else
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
+
+      # Ricrea SEMPRE sa.json prima dell’upload su Drive
+      - name: Prepare Google service account JSON
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
+          echo "✅ Service account JSON pronto"
 
       - name: Upload feed to Google Drive
         if: steps.feedcheck.outputs.changed == 'true'
