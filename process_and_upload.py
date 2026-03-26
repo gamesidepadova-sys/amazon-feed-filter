@@ -57,11 +57,29 @@ def save_daily_snapshot(df):
     today = date.today().isoformat()
     df.to_csv(f"{DAILY_DIR}/snapshot_{today}.csv", index=False)
 
+# =========================================================
+# 🔥 PATCH: versione robusta
+# =========================================================
+
 def load_yesterday_snapshot():
     files = sorted(os.listdir(DAILY_DIR))
+
     if not files:
+        print("⚠️ Nessuno snapshot precedente trovato. Nessun tag oggi.")
         return None
-    return pd.read_csv(f"{DAILY_DIR}/{files[-1]}")
+
+    path = f"{DAILY_DIR}/{files[-1]}"
+
+    # File vuoto → nessun tag oggi
+    if os.path.getsize(path) == 0:
+        print(f"⚠️ Snapshot vuoto ({path}). Nessun tag oggi.")
+        return None
+
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        print(f"⚠️ Snapshot non leggibile ({path}). Nessun tag oggi.")
+        return None
 
 def to_int(x, default=0):
     try:
