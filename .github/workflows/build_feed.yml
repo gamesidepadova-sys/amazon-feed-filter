@@ -64,7 +64,7 @@ jobs:
 
       # Carica snapshot SOLO nella prima run del giorno
       - name: Upload snapshot artifact
-        if: steps.daterun.outputs.first_run == 'true'
+        if: true
         uses: actions/upload-artifact@v4
         with:
           name: daily-snapshot
