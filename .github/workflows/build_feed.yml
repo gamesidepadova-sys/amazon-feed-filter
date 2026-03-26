@@ -51,13 +51,8 @@ jobs:
           fi
 
       # Scarica snapshot SOLO nella prima run del giorno
-      - name: Download snapshot artifact
-        if: steps.daterun.outputs.first_run == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: daily-snapshot
-          path: daily_snapshots
-        continue-on-error: true
+      - name: Skip snapshot download (temporary)
+        run: echo "Skipping snapshot download"
 
       - name: Verifica snapshot
         run: |
