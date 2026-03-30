@@ -19,12 +19,13 @@ def main():
         resumable=False
     )
 
+    # Aggiorna il file esistente su Google Drive
     service.files().update(
         fileId=FILE_ID,
         media_body=media
     ).execute()
 
-    print("File aggiornato su Google Drive!")
+    print("✅ File aggiornato su Google Drive!")
 
 if __name__ == "__main__":
     main()
