@@ -27,7 +27,7 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
-# PESO CORRETTO (logica originale)
+# PESO (LOGICA ORIGINALE)
 SUPPLIER_WEIGHT = {
     "0372": 99.772,
     "0373": 99.773,
@@ -55,6 +55,7 @@ def is_first_run_today():
     return not os.path.exists(get_today_snapshot_path())
 
 def save_today_snapshot(df):
+    df["_supplier"] = df["_supplier"].astype(str)  # 🔴 FIX IMPORTANTE
     df.to_csv(get_today_snapshot_path(), index=False)
 
 def load_yesterday_snapshot():
@@ -63,7 +64,7 @@ def load_yesterday_snapshot():
         print("⚠️ Snapshot di ieri non trovato")
         return None
     try:
-        df = pd.read_csv(path, dtype=str)
+        df = pd.read_csv(path, dtype={"_supplier": str})  # 🔴 FIX IMPORTANTE
         df["quantita"] = pd.to_numeric(df["quantita"], errors="coerce").fillna(0)
         df["ean"] = df["ean"].astype(str).str.strip()
         return df
@@ -73,29 +74,19 @@ def load_yesterday_snapshot():
 
 def to_int(x, default=0):
     try:
-        s = str(x or "").strip()
-        if not s:
-            return default
-        s = s.replace(".", "").replace(",", ".")
-        return int(float(s))
+        return int(float(str(x).replace(",", ".").strip()))
     except:
         return default
 
 def to_float(x, default=0.0):
     try:
-        s = str(x or "").strip()
-        if not s:
-            return default
-        s = s.replace(",", ".")
-        return float(s)
+        return float(str(x).replace(",", ".").strip())
     except:
         return default
 
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").strip().split("_")
-    if len(parts) >= 3:
-        return parts[1]
-    return ""
+    return parts[1] if len(parts) >= 3 else ""
 
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
@@ -103,13 +94,9 @@ def norm(s: str) -> str:
 def clean_text(text: str) -> str:
     t = str(text or "")
     t = re.sub("<.*?>", " ", t)
-    t = t.replace("&nbsp;", " ")
-    t = t.replace('"', "")
-    t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
-    t = re.sub(" +", " ", t)
-    return t.strip()
+    t = t.replace("&nbsp;", " ").replace('"', "").replace("|", " ")
+    t = t.replace("\n", " ").replace("\r", " ")
+    return re.sub(" +", " ", t).strip()
 
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
@@ -122,21 +109,30 @@ def detect_new(today_df, yesterday_df):
     if yesterday_df is None:
         today_df["status"] = "UNCHANGED"
         return today_df
+
     yesterday_eans = set(yesterday_df["ean"])
-    today_df["status"] = today_df["ean"].apply(lambda e: "NEW" if e not in yesterday_eans else "UNCHANGED")
+    today_df["status"] = today_df["ean"].apply(
+        lambda e: "NEW" if e not in yesterday_eans else "UNCHANGED"
+    )
     return today_df
 
 def detect_stock_trend(today_df, yesterday_df):
     if yesterday_df is None:
         today_df["stock_trend"] = "UNCHANGED"
         return today_df
+
     merged = today_df.merge(
         yesterday_df[["ean", "quantita"]],
         on="ean",
         how="left",
         suffixes=("", "_yesterday")
     )
-    merged["quantita_yesterday"] = pd.to_numeric(merged.get("quantita_yesterday", 0), errors="coerce").fillna(0)
+
+    merged["quantita_yesterday"] = pd.to_numeric(
+        merged.get("quantita_yesterday", 0),
+        errors="coerce"
+    ).fillna(0)
+
     return merged
 
 def apply_tags(df):
@@ -167,8 +163,8 @@ def main():
     print("📥 Scarico feed originale...")
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
-    text = resp.content.decode("utf-8-sig", errors="replace")
 
+    text = resp.content.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
     reader.fieldnames = [name.replace("\ufeff", "") for name in reader.fieldnames]
 
@@ -193,11 +189,11 @@ def main():
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
 
-            cat1 = norm(r.get("cat1") or "")
+            cat1 = norm(r.get("cat1"))
             if cat1 not in ALLOWED_CAT1:
                 continue
 
-            titolo = norm(r.get("titolo_prodotto") or "")
+            titolo = norm(r.get("titolo_prodotto"))
             if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
@@ -205,7 +201,7 @@ def main():
             if qty < MIN_QTY:
                 continue
 
-            ean = clean_text(r.get("ean") or "")
+            ean = clean_text(r.get("ean"))
             if not valid_ean(ean):
                 continue
 
@@ -214,9 +210,8 @@ def main():
             prezzo_totale = prezzo + spedizione
 
             row = {k: clean_text(r.get(k) or "") for k in fields}
-            row["_original_sku"] = sku
+            row["_supplier"] = supplier
             row["_price"] = prezzo_totale
-            row["_supplier"] = str(supplier)
 
             ean_groups.setdefault(ean, []).append(row)
 
@@ -263,7 +258,7 @@ def main():
 
     else:
         print("🔁 Run successivo")
-        today_df = pd.read_csv(get_today_snapshot_path(), dtype=str)
+        today_df = pd.read_csv(get_today_snapshot_path(), dtype={"_supplier": str})
         today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
 
     # ==========================
@@ -282,15 +277,15 @@ def main():
         for _, r in today_df.iterrows():
             r_dict = r.to_dict()
 
-            supplier_best = str(r_dict.get("_supplier", "")).strip()
-
+            supplier_best = r_dict.get("_supplier")
             peso_val = SUPPLIER_WEIGHT.get(supplier_best)
+
             if peso_val is not None:
                 r_dict["peso"] = "24" + str(int(round(peso_val * 100)))
             else:
                 r_dict["peso"] = "24"
 
-            for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend", "quantita_yesterday"]:
+            for col in ["_price", "_supplier", "status", "stock_trend", "quantita_yesterday"]:
                 r_dict.pop(col, None)
 
             writer.writerow(r_dict)
