@@ -285,7 +285,7 @@ def main():
             else:
                 r_dict["peso"] = "24"
 
-            for col in ["_price", "_supplier", "status", "stock_trend", "quantita_yesterday"]:
+            for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend", "quantita_yesterday"]:
                 r_dict.pop(col, None)
 
             writer.writerow(r_dict)
