@@ -62,7 +62,8 @@ def load_yesterday_snapshot():
         print("⚠️ Snapshot di ieri non trovato")
         return None
     try:
-        df = pd.read_csv(path)
+        df = pd.read_csv(path, dtype=str)
+        df["quantita"] = pd.to_numeric(df["quantita"], errors="coerce").fillna(0)
         df["ean"] = df["ean"].astype(str).str.strip()
         return df
     except:
@@ -134,6 +135,7 @@ def detect_stock_trend(today_df, yesterday_df):
         how="left",
         suffixes=("", "_yesterday")
     )
+    merged["quantita_yesterday"] = pd.to_numeric(merged.get("quantita_yesterday", 0), errors="coerce").fillna(0)
     return merged
 
 def apply_tags(df):
@@ -238,10 +240,9 @@ def main():
     today_df = pd.DataFrame(best_by_ean.values())
     today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
 
-    yesterday_df = load_yesterday_snapshot()
-
     if is_first_run_today():
         print("🌅 Prima run del giorno → calcolo tag")
+        yesterday_df = load_yesterday_snapshot()
         today_df = detect_new(today_df, yesterday_df)
         today_df = detect_stock_trend(today_df, yesterday_df)
         if yesterday_df is not None:
@@ -252,7 +253,8 @@ def main():
         save_today_snapshot(today_df)
     else:
         print("🔁 Run successivo → riuso snapshot già creato")
-        today_df = pd.read_csv(get_today_snapshot_path())
+        today_df = pd.read_csv(get_today_snapshot_path(), dtype=str)
+        today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
 
     # =========================================================
     # SCRITTURA FILE FINALE
@@ -271,7 +273,7 @@ def main():
             r_dict = r.to_dict()
 
             # --- Calcolo peso basato sul fornitore
-            supplier_best = r_dict.get("_supplier", "").strip()
+            supplier_best = str(r_dict.get("_supplier", "")).strip()
             peso_val = SUPPLIER_WEIGHT.get(supplier_best)
             if peso_val is not None:
                 r_dict["peso"] = "24" + str(int(round(float(peso_val) * 100)))
