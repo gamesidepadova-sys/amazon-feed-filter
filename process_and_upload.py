@@ -76,7 +76,7 @@ def load_yesterday_snapshot():
         return None
 
     try:
-        return pd.read_csv(path, dtype={"_supplier": str})
+        return pd.read_csv(path, dtype={"_supplier": str, "ean": str})
     except:
         print("⚠️ Errore lettura snapshot")
         return None
@@ -247,7 +247,7 @@ def main():
 
         best_by_ean[ean] = best
 
-    today_df = pd.DataFrame(best_by_ean.values())
+    today_df["ean"] = today_df["ean"].astype(str)
     yesterday_df = load_yesterday_snapshot()
 
     today_df = detect_new(today_df, yesterday_df)
