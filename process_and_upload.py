@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date
 import csv
 import requests
 import io
@@ -9,6 +9,7 @@ import pandas as pd
 # =========================================================
 # CONFIG
 # =========================================================
+
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 DAILY_DIR = "daily_snapshots"
@@ -27,49 +28,57 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
-# PESO (LOGICA ORIGINALE)
+# ✅ PESO CORRETTO (COME VERSIONE ORIGINALE)
 SUPPLIER_WEIGHT = {
-    "0372": 99.772,
-    "0373": 99.773,
-    "0374": 99.774,
-    "0380": 99.980,
-    "0381": 99.981,
-    "0382": 99.982,
-    "0383": 99.983
+    "0372": 99.72,
+    "0373": 99.73,
+    "0374": 99.74,
+    "0380": 99.80,
+    "0381": 99.81,
+    "0382": 99.82,
+    "0383": 99.83
 }
 
 # =========================================================
 # UTILS
 # =========================================================
+
 def today_tag(prefix):
     return f"{prefix}_{date.today().strftime('%Y%m%d')}"
 
-def get_today_snapshot_path():
-    return f"{DAILY_DIR}/snapshot_{date.today().isoformat()}.csv"
-
-def get_yesterday_snapshot_path():
-    yesterday = date.today() - timedelta(days=1)
-    return f"{DAILY_DIR}/snapshot_{yesterday.isoformat()}.csv"
-
 def is_first_run_today():
-    return not os.path.exists(get_today_snapshot_path())
+    today = date.today().isoformat()
+    return f"snapshot_{today}.csv" not in os.listdir(DAILY_DIR)
 
-def save_today_snapshot(df):
-    df["_supplier"] = df["_supplier"].astype(str)  # 🔴 FIX IMPORTANTE
-    df.to_csv(get_today_snapshot_path(), index=False)
+def no_snapshot_exists_yet():
+    return len([f for f in os.listdir(DAILY_DIR) if f.endswith(".csv")]) == 0
+
+def save_daily_snapshot(df):
+    today = date.today().isoformat()
+    path = f"{DAILY_DIR}/snapshot_{today}.csv"
+
+    # 🔒 salva supplier come stringa
+    df["_supplier"] = df["_supplier"].astype(str)
+
+    df.to_csv(path, index=False)
 
 def load_yesterday_snapshot():
-    path = get_yesterday_snapshot_path()
-    if not os.path.exists(path):
-        print("⚠️ Snapshot di ieri non trovato")
+    files = sorted([f for f in os.listdir(DAILY_DIR) if f.endswith(".csv")])
+
+    if not files:
+        print("⚠️ Nessuno snapshot precedente")
         return None
+
+    path = f"{DAILY_DIR}/{files[-1]}"
+
+    if os.path.getsize(path) == 0:
+        print("⚠️ Snapshot vuoto")
+        return None
+
     try:
-        df = pd.read_csv(path, dtype={"_supplier": str})  # 🔴 FIX IMPORTANTE
-        df["quantita"] = pd.to_numeric(df["quantita"], errors="coerce").fillna(0)
-        df["ean"] = df["ean"].astype(str).str.strip()
-        return df
+        return pd.read_csv(path, dtype={"_supplier": str})
     except:
-        print("⚠️ Snapshot ieri non leggibile")
+        print("⚠️ Errore lettura snapshot")
         return None
 
 def to_int(x, default=0):
@@ -86,7 +95,9 @@ def to_float(x, default=0.0):
 
 def supplier_from_sku(sku: str) -> str:
     parts = (sku or "").strip().split("_")
-    return parts[1] if len(parts) >= 3 else ""
+    if len(parts) >= 3:
+        return parts[1]
+    return ""
 
 def norm(s: str) -> str:
     return str(s or "").strip().lower()
@@ -94,9 +105,11 @@ def norm(s: str) -> str:
 def clean_text(text: str) -> str:
     t = str(text or "")
     t = re.sub("<.*?>", " ", t)
-    t = t.replace("&nbsp;", " ").replace('"', "").replace("|", " ")
-    t = t.replace("\n", " ").replace("\r", " ")
-    return re.sub(" +", " ", t).strip()
+    t = t.replace("&nbsp;", " ")
+    t = t.replace('"', "")
+    t = t.replace("|", " ")
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
 
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
@@ -105,6 +118,7 @@ def valid_ean(ean: str) -> bool:
 # =========================================================
 # TAG LOGIC
 # =========================================================
+
 def detect_new(today_df, yesterday_df):
     if yesterday_df is None:
         today_df["status"] = "UNCHANGED"
@@ -128,11 +142,17 @@ def detect_stock_trend(today_df, yesterday_df):
         suffixes=("", "_yesterday")
     )
 
-    merged["quantita_yesterday"] = pd.to_numeric(
-        merged.get("quantita_yesterday", 0),
-        errors="coerce"
-    ).fillna(0)
+    def trend(row):
+        if pd.isna(row["quantita_yesterday"]):
+            return "UNCHANGED"
 
+        # ✅ LOGICA CORRETTA: ieri < 10 e oggi > 14
+        if row["quantita"] > 14 and row["quantita_yesterday"] < 10:
+            return "RECOVERED"
+
+        return "UNCHANGED"
+
+    merged["stock_trend"] = merged.apply(trend, axis=1)
     return merged
 
 def apply_tags(df):
@@ -143,14 +163,11 @@ def apply_tags(df):
     for idx, row in df.iterrows():
         tags = []
 
-        if row.get("status") == "NEW":
+        if row["status"] == "NEW":
             tags.append(new_tag)
-        else:
-            qty_today = pd.to_numeric(row["quantita"], errors="coerce")
-            qty_yesterday = pd.to_numeric(row.get("quantita_yesterday", 0), errors="coerce")
 
-            if qty_yesterday < 10 and qty_today > 14:
-                tags.append(mod_tag)
+        if row["stock_trend"] == "RECOVERED":
+            tags.append(mod_tag)
 
         df.at[idx, "tag"] = ",".join(tags)
 
@@ -159,14 +176,15 @@ def apply_tags(df):
 # =========================================================
 # MAIN
 # =========================================================
+
 def main():
-    print("📥 Scarico feed originale...")
+    print("📥 Scarico feed...")
     resp = requests.get(INPUT_URL)
     resp.raise_for_status()
-
     text = resp.content.decode("utf-8-sig", errors="replace")
+
     reader = csv.DictReader(io.StringIO(text), delimiter="|")
-    reader.fieldnames = [name.replace("\ufeff", "") for name in reader.fieldnames]
+    reader.fieldnames = [f.replace("\ufeff", "") for f in reader.fieldnames]
 
     fields = [
         "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
@@ -175,10 +193,6 @@ def main():
     ]
 
     rows_raw = list(reader)
-
-    # ==========================
-    # FILTRO + GROUP
-    # ==========================
     ean_groups = {}
 
     for r in rows_raw:
@@ -189,11 +203,11 @@ def main():
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
 
-            cat1 = norm(r.get("cat1"))
+            cat1 = norm(r.get("cat1") or "")
             if cat1 not in ALLOWED_CAT1:
                 continue
 
-            titolo = norm(r.get("titolo_prodotto"))
+            titolo = norm(r.get("titolo_prodotto") or "")
             if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
@@ -201,28 +215,25 @@ def main():
             if qty < MIN_QTY:
                 continue
 
-            ean = clean_text(r.get("ean"))
+            ean = clean_text(r.get("ean") or "")
             if not valid_ean(ean):
                 continue
 
             prezzo = to_float(r.get("prezzo_iva_esclusa"))
-            spedizione = to_float(r.get("costo_spedizione"))
-            prezzo_totale = prezzo + spedizione
+            sped = to_float(r.get("costo_spedizione"))
+            prezzo_tot = prezzo + sped
 
             row = {k: clean_text(r.get(k) or "") for k in fields}
+            row["_price"] = prezzo_tot
             row["_supplier"] = supplier
-            row["_price"] = prezzo_totale
+            row["_original_sku"] = sku
 
             ean_groups.setdefault(ean, []).append(row)
 
         except:
             continue
 
-    # ==========================
-    # BEST PRICE
-    # ==========================
     best_by_ean = {}
-
     for ean, rows in ean_groups.items():
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
@@ -230,56 +241,42 @@ def main():
         row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
 
         if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
-            best_row = row_0373
+            best = row_0373
         else:
-            best_row = min_row
+            best = min_row
 
-        best_by_ean[ean] = best_row
+        best_by_ean[ean] = best
 
     today_df = pd.DataFrame(best_by_ean.values())
-    today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
+    yesterday_df = load_yesterday_snapshot()
 
-    # ==========================
-    # TAG + SNAPSHOT
-    # ==========================
-    if is_first_run_today():
-        print("🌅 Prima run del giorno")
-        yesterday_df = load_yesterday_snapshot()
+    today_df = detect_new(today_df, yesterday_df)
+    today_df = detect_stock_trend(today_df, yesterday_df)
 
-        today_df = detect_new(today_df, yesterday_df)
-        today_df = detect_stock_trend(today_df, yesterday_df)
+    if no_snapshot_exists_yet():
+        print("🟡 Primo snapshot (no tag)")
+        today_df["tag"] = ""
+        save_daily_snapshot(today_df)
 
-        if yesterday_df is not None:
-            today_df = apply_tags(today_df)
-        else:
-            today_df["tag"] = ""
-
-        save_today_snapshot(today_df)
+    elif is_first_run_today():
+        print("🟢 Primo run oggi → tag attivi")
+        today_df = apply_tags(today_df)
+        save_daily_snapshot(today_df)
 
     else:
-        print("🔁 Run successivo")
-        today_df = pd.read_csv(get_today_snapshot_path(), dtype={"_supplier": str})
-        today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
+        print("⚪ Run successivo → no tag")
+        today_df["tag"] = ""
 
-    # ==========================
-    # OUTPUT
-    # ==========================
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-        writer = csv.DictWriter(
-            out,
-            fieldnames=fields + ["tag"],
-            delimiter="|",
-            quoting=csv.QUOTE_NONE,
-            escapechar="\\"
-        )
+        writer = csv.DictWriter(out, fieldnames=fields + ["tag"], delimiter="|")
         writer.writeheader()
 
         for _, r in today_df.iterrows():
             r_dict = r.to_dict()
 
-            supplier_best = r_dict.get("_supplier")
-            peso_val = SUPPLIER_WEIGHT.get(supplier_best)
+            supplier_best = str(r_dict.get("_supplier"))
 
+            peso_val = SUPPLIER_WEIGHT.get(supplier_best)
             if peso_val is not None:
                 r_dict["peso"] = "24" + str(int(round(peso_val * 100)))
             else:
@@ -290,10 +287,7 @@ def main():
 
             writer.writerow(r_dict)
 
-    print(f"\n📝 Feed generato: {OUTPUT_FILE}")
-    print("\n📊 TAG:")
-    print(today_df["tag"].value_counts(dropna=False))
-
+    print("✅ Feed generato correttamente")
 
 if __name__ == "__main__":
     main()
