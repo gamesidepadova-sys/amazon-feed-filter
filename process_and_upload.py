@@ -27,14 +27,15 @@ EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
+# PESO CORRETTO (logica originale)
 SUPPLIER_WEIGHT = {
-    "0372": 99.72,
-    "0373": 99.73,
-    "0374": 99.74,
-    "0380": 2499.80,  # peso corretto per _0380_
-    "0381": 99.81,
-    "0382": 99.82,
-    "0383": 99.83
+    "0372": 99.772,
+    "0373": 99.773,
+    "0374": 99.774,
+    "0380": 99.980,
+    "0381": 99.981,
+    "0382": 99.982,
+    "0383": 99.983
 }
 
 # =========================================================
@@ -146,16 +147,17 @@ def apply_tags(df):
     for idx, row in df.iterrows():
         tags = []
 
-        # NUOVO
         if row.get("status") == "NEW":
             tags.append(new_tag)
         else:
             qty_today = pd.to_numeric(row["quantita"], errors="coerce")
             qty_yesterday = pd.to_numeric(row.get("quantita_yesterday", 0), errors="coerce")
+
             if qty_yesterday < 10 and qty_today > 14:
                 tags.append(mod_tag)
 
         df.at[idx, "tag"] = ",".join(tags)
+
     return df
 
 # =========================================================
@@ -179,25 +181,27 @@ def main():
     rows_raw = list(reader)
 
     # ==========================
-    # Raggruppamento per EAN
+    # FILTRO + GROUP
     # ==========================
     ean_groups = {}
+
     for r in rows_raw:
         try:
             sku = r.get("sku") or ""
             supplier = supplier_from_sku(sku)
+
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
 
-            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+            cat1 = norm(r.get("cat1") or "")
             if cat1 not in ALLOWED_CAT1:
                 continue
 
-            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+            titolo = norm(r.get("titolo_prodotto") or "")
             if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
                 continue
 
-            qty = to_int(r.get("quantita") or r.get("qty"))
+            qty = to_int(r.get("quantita"))
             if qty < MIN_QTY:
                 continue
 
@@ -212,21 +216,24 @@ def main():
             row = {k: clean_text(r.get(k) or "") for k in fields}
             row["_original_sku"] = sku
             row["_price"] = prezzo_totale
-            row["_supplier"] = supplier
+            row["_supplier"] = str(supplier)
 
             ean_groups.setdefault(ean, []).append(row)
+
         except:
             continue
 
     # ==========================
-    # Scelta migliore per EAN
+    # BEST PRICE
     # ==========================
     best_by_ean = {}
+
     for ean, rows in ean_groups.items():
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
         row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
+
         if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
             best_row = row_0373
         else:
@@ -234,31 +241,34 @@ def main():
 
         best_by_ean[ean] = best_row
 
-    # =========================================================
-    # TAG + SNAPSHOT
-    # ==========================================================
     today_df = pd.DataFrame(best_by_ean.values())
     today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
 
+    # ==========================
+    # TAG + SNAPSHOT
+    # ==========================
     if is_first_run_today():
-        print("🌅 Prima run del giorno → calcolo tag")
+        print("🌅 Prima run del giorno")
         yesterday_df = load_yesterday_snapshot()
+
         today_df = detect_new(today_df, yesterday_df)
         today_df = detect_stock_trend(today_df, yesterday_df)
+
         if yesterday_df is not None:
             today_df = apply_tags(today_df)
         else:
-            print("⚠️ Nessun ieri → niente tag")
             today_df["tag"] = ""
+
         save_today_snapshot(today_df)
+
     else:
-        print("🔁 Run successivo → riuso snapshot già creato")
+        print("🔁 Run successivo")
         today_df = pd.read_csv(get_today_snapshot_path(), dtype=str)
         today_df["quantita"] = pd.to_numeric(today_df["quantita"], errors="coerce").fillna(0)
 
-    # =========================================================
-    # SCRITTURA FILE FINALE
-    # ==========================================================
+    # ==========================
+    # OUTPUT
+    # ==========================
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
             out,
@@ -272,22 +282,21 @@ def main():
         for _, r in today_df.iterrows():
             r_dict = r.to_dict()
 
-            # --- Calcolo peso basato sul fornitore
             supplier_best = str(r_dict.get("_supplier", "")).strip()
+
             peso_val = SUPPLIER_WEIGHT.get(supplier_best)
             if peso_val is not None:
-                r_dict["peso"] = "24" + str(int(round(float(peso_val) * 100)))
+                r_dict["peso"] = "24" + str(int(round(peso_val * 100)))
             else:
                 r_dict["peso"] = "24"
 
-            # Rimuovi colonne tecniche
             for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend", "quantita_yesterday"]:
                 r_dict.pop(col, None)
 
             writer.writerow(r_dict)
 
     print(f"\n📝 Feed generato: {OUTPUT_FILE}")
-    print("\n📊 DEBUG TAG:")
+    print("\n📊 TAG:")
     print(today_df["tag"].value_counts(dropna=False))
 
 
