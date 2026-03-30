@@ -62,14 +62,13 @@ def load_yesterday_snapshot():
     if not files:
         print("⚠️ Nessuno snapshot precedente trovato. Nessun tag oggi.")
         return None
-
     path = f"{DAILY_DIR}/{files[-1]}"
     if os.path.getsize(path) == 0:
         print(f"⚠️ Snapshot vuoto ({path}). Nessun tag oggi.")
         return None
-
     try:
-        return pd.read_csv(path)
+        df = pd.read_csv(path, dtype={"ean": str})
+        return df
     except pd.errors.EmptyDataError:
         print(f"⚠️ Snapshot non leggibile ({path}). Nessun tag oggi.")
         return None
@@ -126,11 +125,8 @@ def detect_new(today_df, yesterday_df):
     if yesterday_df is None:
         today_df["status"] = "UNCHANGED"
         return today_df
-    yesterday_df["ean"] = yesterday_df["ean"].astype(str)
     yesterday_eans = set(yesterday_df["ean"])
-    today_df["status"] = today_df["ean"].apply(
-        lambda e: "NEW" if e not in yesterday_eans else "UNCHANGED"
-    )
+    today_df["status"] = today_df["ean"].astype(str).apply(lambda e: "NEW" if e not in yesterday_eans else "UNCHANGED")
     return today_df
 
 def detect_stock_trend(today_df, yesterday_df):
@@ -138,18 +134,14 @@ def detect_stock_trend(today_df, yesterday_df):
         today_df["stock_trend"] = "UNCHANGED"
         return today_df
 
-    # Forza tipo numerico
-    today_df["quantita"] = today_df["quantita"].apply(to_int)
     yesterday_df["quantita"] = yesterday_df["quantita"].apply(to_int)
-    yesterday_df["ean"] = yesterday_df["ean"].astype(str)
-
     merged = today_df.merge(
         yesterday_df[["ean", "quantita"]],
         on="ean",
         how="left",
         suffixes=("", "_yesterday")
     )
-
+    merged["quantita"] = merged["quantita"].apply(to_int)
     merged["quantita_yesterday"] = merged["quantita_yesterday"].apply(lambda x: to_int(x, default=0))
 
     def trend(row):
@@ -197,8 +189,12 @@ def main():
     ]
 
     rows_raw = list(reader)
-    ean_groups = {}
 
+    # ==========================
+    # RAGGRUPPAMENTO PER EAN
+    # ==========================
+
+    ean_groups = {}
     for r in rows_raw:
         try:
             sku = r.get("sku") or ""
@@ -230,35 +226,46 @@ def main():
             row["_original_sku"] = sku
             row["_price"] = prezzo_totale
             row["_supplier"] = supplier
+            row["quantita"] = qty  # assicurati che sia int
 
             ean_groups.setdefault(ean, []).append(row)
+
         except:
             continue
+
+    # ==========================
+    # SCELTA MIGLIORE PER EAN
+    # ==========================
 
     best_by_ean = {}
     for ean, rows in ean_groups.items():
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
+
         row_0373 = next((r for r in rows if r["_supplier"] == "0373"), None)
         if row_0373 and row_0373["_price"] <= min_price + MAX_DIFF_0373:
             best_row = row_0373
         else:
             best_row = min_row
+
         best_by_ean[ean] = best_row
 
-    today_df = pd.DataFrame(best_by_ean.values())
-    yesterday_df = load_yesterday_snapshot()
+    # =========================================================
+    # TAG + SNAPSHOT
+    # ==========================================================
 
-    # Forza tipo stringa per 'ean'
-    today_df["ean"] = today_df["ean"].astype(str)
+    today_df = pd.DataFrame(best_by_ean.values(), dtype=object)
+    yesterday_df = load_yesterday_snapshot()
 
     today_df = detect_new(today_df, yesterday_df)
     today_df = detect_stock_trend(today_df, yesterday_df)
 
+    # --- LOGICA DEFINITIVA ---
     if no_snapshot_exists_yet():
         print("🟡 Nessuno snapshot precedente → salvo snapshot base senza tag")
         today_df["tag"] = ""
         save_daily_snapshot(today_df)
+
     elif is_first_run_today():
         print("🟢 Primo run del giorno → assegno i tag")
         today_df = apply_tags(today_df)
@@ -269,7 +276,7 @@ def main():
 
     # =========================================================
     # SCRITTURA FILE FINALE
-    # =========================================================
+    # ==========================================================
 
     with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
         writer = csv.DictWriter(
@@ -289,7 +296,8 @@ def main():
                 r["peso"] = "24"
 
             r_dict = r.to_dict()
-            for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend"]:
+            # Rimuovi tutte le colonne tecniche
+            for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend", "quantita_yesterday"]:
                 r_dict.pop(col, None)
             writer.writerow(r_dict)
 
