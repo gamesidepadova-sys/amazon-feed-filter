@@ -31,7 +31,7 @@ SUPPLIER_WEIGHT = {
     "0372": 99.72,
     "0373": 99.73,
     "0374": 99.74,
-    "0380": 249980,  # peso corretto per _0380_
+    "0380": 2499.80,  # peso corretto per _0380_
     "0381": 99.81,
     "0382": 99.82,
     "0383": 99.83
@@ -271,10 +271,10 @@ def main():
             r_dict = r.to_dict()
 
             # --- Calcolo peso basato sul fornitore
-            supplier_best = r_dict.get("_supplier", "")
+            supplier_best = r_dict.get("_supplier", "").strip()
             peso_val = SUPPLIER_WEIGHT.get(supplier_best)
             if peso_val is not None:
-                r_dict["peso"] = str(peso_val)
+                r_dict["peso"] = "24" + str(int(round(float(peso_val) * 100)))
             else:
                 r_dict["peso"] = "24"
 
