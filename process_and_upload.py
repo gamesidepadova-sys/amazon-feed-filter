@@ -164,23 +164,6 @@ def detect_stock_trend(today_df, yesterday_df):
     merged["stock_trend"] = merged.apply(trend, axis=1)
     return merged
 
-def apply_tags(df):
-    df["tag"] = ""
-    new_tag = today_tag("new")
-    mod_tag = today_tag("mod")
-
-    for idx, row in df.iterrows():
-        tags = []
-
-        if row["status"] == "NEW":
-            tags.append(new_tag)
-
-        if row["stock_trend"] in ("RECOVERED", "INCREASED"):
-            tags.append(mod_tag)
-
-        df.at[idx, "tag"] = ",".join(tags)
-
-    return df
 
 # =========================================================
 # MAIN
@@ -268,24 +251,14 @@ def main():
         best_by_ean[ean] = best_row
 
     # =========================================================
-    # TAG + SNAPSHOT
+    # SNAPSHOT
     # =========================================================
 
     today_df = pd.DataFrame(best_by_ean.values())
-    yesterday_df = load_yesterday_snapshot()
 
-    today_df = detect_new(today_df, yesterday_df)
-    today_df = detect_stock_trend(today_df, yesterday_df)
-
-    # --- LOGICA DEFINITIVA ---
-    if no_snapshot_exists_yet() or is_first_run_today():
-        print("🟡 Primo run → assegno 'Base' a tutti i prodotti")
-        today_df["tag"] = "Base"
-        save_daily_snapshot(today_df)
-
-    else:
-        print("⚪ Run successivo → nessun tag assegnato")
-        today_df["tag"] = ""
+    # Salva sempre lo snapshot senza assegnare tag
+    print("📥 Salvataggio snapshot senza tag")
+    save_daily_snapshot(today_df)
 
     # =========================================================
     # SCRITTURA FILE FINALE
