@@ -1,5 +1,8 @@
 name: Build Feed (Force Upload Definitivo)
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 on:
   schedule:
     - cron: "*/30 * * * *"  # ogni 30 minuti
@@ -13,24 +16,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Setup Python
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      # 3️⃣ Installa dipendenze
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install requests google-api-python-client google-auth-httplib2 google-auth-oauthlib pandas
 
+      # 4️⃣ Service account JSON
       - name: Prepare Google service account JSON
         run: |
           echo "${{ secrets.GOOGLE_SERVICE_ACCOUNT_B64 }}" | base64 -d > sa.json
           echo "✅ Service account JSON pronto"
 
+      # 5️⃣ Validazione JSON
       - name: Validate service account JSON
         run: |
           python3 - << 'EOF'
@@ -40,9 +48,31 @@ jobs:
           print("✅ Service account JSON valido")
           EOF
 
+      # 6️⃣ Scarica snapshot precedente (se esiste)
+      - name: Download snapshot artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: daily-snapshot
+          path: daily_snapshots
+        continue-on-error: true
+
+      - name: Verifica snapshot
+        run: |
+          echo "📁 Contenuto snapshot:"
+          ls -l daily_snapshots || true
+
+      # 7️⃣ Genera feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
+      # 8️⃣ Carica snapshot aggiornato
+      - name: Upload snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-snapshot
+          path: daily_snapshots
+
+      # 9️⃣ Controllo se il feed è cambiato
       - name: Check if feed changed
         id: feedcheck
         run: |
@@ -53,20 +83,33 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
+      # 🔟 Upload su Google Drive solo se cambiato
       - name: Upload feed to Google Drive
         if: steps.feedcheck.outputs.changed == 'true'
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
-        run: python upload_to_drive.py
-
-      - name: Commit daily snapshots
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add daily_snapshots/
-          git commit -m "Update daily snapshot" || echo "No changes"
-          git push
+          python3 - << 'EOF'
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          import os
 
+          FILE_ID = os.environ["FILE_ID"]
+
+          creds = service_account.Credentials.from_service_account_file(
+              "sa.json",
+              scopes=["https://www.googleapis.com/auth/drive"]
+          )
+
+          service = build("drive", "v3", credentials=creds)
+
+          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
+          service.files().update(fileId=FILE_ID, media_body=media).execute()
+          print("✅ File aggiornato su Google Drive")
+          EOF
+
+      # 1️⃣1️⃣ Commit feed solo se cambiato
       - name: Commit feed only if changed
         if: steps.feedcheck.outputs.changed == 'true'
         run: |
