@@ -278,18 +278,13 @@ def main():
     today_df = detect_stock_trend(today_df, yesterday_df)
 
     # --- LOGICA DEFINITIVA ---
-    if no_snapshot_exists_yet():
-        print("🟡 Nessuno snapshot precedente → salvo snapshot base senza tag")
-        today_df["tag"] = ""
-        save_daily_snapshot(today_df)
-
-    elif is_first_run_today():
-        print("🟢 Primo run del giorno → assegno i tag")
-        today_df = apply_tags(today_df)
+    if no_snapshot_exists_yet() or is_first_run_today():
+        print("🟡 Primo run → assegno 'Base' a tutti i prodotti")
+        today_df["tag"] = "Base"
         save_daily_snapshot(today_df)
 
     else:
-        print("⚪ Run successivo → niente tag, niente snapshot")
+        print("⚪ Run successivo → nessun tag assegnato")
         today_df["tag"] = ""
 
     # =========================================================
