@@ -5,6 +5,7 @@ import io
 import re
 import os
 import pandas as pd
+import hashlib
 
 # =========================================================
 # CONFIG
@@ -12,9 +13,6 @@ import pandas as pd
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
-DAILY_DIR = "daily_snapshots"
-
-os.makedirs(DAILY_DIR, exist_ok=True)
 
 ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
 ALLOWED_CAT1 = {
@@ -41,45 +39,6 @@ SUPPLIER_WEIGHT = {
 # =========================================================
 # UTILS
 # =========================================================
-
-def today_tag(prefix):
-    return f"{prefix}_{date.today().strftime('%Y%m%d')}"
-
-def is_first_run_today():
-    today = date.today().isoformat()
-    expected = f"snapshot_{today}.csv"
-    return expected not in os.listdir(DAILY_DIR)
-
-def no_snapshot_exists_yet():
-    return len(os.listdir(DAILY_DIR)) == 0
-
-def save_daily_snapshot(df):
-    today = date.today().isoformat()
-    df.to_csv(f"{DAILY_DIR}/snapshot_{today}.csv", index=False)
-
-# =========================================================
-# 🔥 PATCH: versione robusta
-# =========================================================
-
-def load_yesterday_snapshot():
-    files = sorted(os.listdir(DAILY_DIR))
-
-    if not files:
-        print("⚠️ Nessuno snapshot precedente trovato. Nessun tag oggi.")
-        return None
-
-    path = f"{DAILY_DIR}/{files[-1]}"
-
-    # File vuoto → nessun tag oggi
-    if os.path.getsize(path) == 0:
-        print(f"⚠️ Snapshot vuoto ({path}). Nessun tag oggi.")
-        return None
-
-    try:
-        return pd.read_csv(path)
-    except pd.errors.EmptyDataError:
-        print(f"⚠️ Snapshot non leggibile ({path}). Nessun tag oggi.")
-        return None
 
 def to_int(x, default=0):
     try:
@@ -124,46 +83,6 @@ def clean_text(text: str) -> str:
 def valid_ean(ean: str) -> bool:
     e = (ean or "").strip()
     return e.isdigit() and 8 <= len(e) <= 14
-
-# =========================================================
-# TAG LOGIC
-# =========================================================
-
-def detect_new(today_df, yesterday_df):
-    if yesterday_df is None:
-        today_df["status"] = "UNCHANGED"
-        return today_df
-
-    yesterday_eans = set(yesterday_df["ean"])
-    today_df["status"] = today_df["ean"].apply(
-        lambda e: "NEW" if e not in yesterday_eans else "UNCHANGED"
-    )
-    return today_df
-
-def detect_stock_trend(today_df, yesterday_df):
-    if yesterday_df is None:
-        today_df["stock_trend"] = "UNCHANGED"
-        return today_df
-
-    merged = today_df.merge(
-        yesterday_df[["ean", "quantita"]],
-        on="ean",
-        how="left",
-        suffixes=("", "_yesterday")
-    )
-
-    def trend(row):
-        if pd.isna(row["quantita_yesterday"]):
-            return "UNCHANGED"
-        if row["quantita"] > 14 and row["quantita_yesterday"] <= 14:
-            return "RECOVERED"
-        if row["quantita"] > row["quantita_yesterday"]:
-            return "INCREASED"
-        return "UNCHANGED"
-
-    merged["stock_trend"] = merged.apply(trend, axis=1)
-    return merged
-
 
 # =========================================================
 # MAIN
@@ -250,50 +169,65 @@ def main():
 
         best_by_ean[ean] = best_row
 
-    # =========================================================
-    # SNAPSHOT
-    # =========================================================
+    # ==========================
+    # GENERAZIONE FILE FINALE
+    # ==========================
 
     today_df = pd.DataFrame(best_by_ean.values())
 
-    # Salva sempre lo snapshot senza assegnare tag
-    print("📥 Salvataggio snapshot senza tag")
-    save_daily_snapshot(today_df)
+    # --------------------------
+    # COSTRUZIONE CSV COME VERRA' SCRITTO
+    # --------------------------
 
-    # =========================================================
-    # SCRITTURA FILE FINALE
-    # =========================================================
+    rows_final = []
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8", newline="") as out:
-        writer = csv.DictWriter(
-            out,
-            fieldnames=fields + ["tag"],
-            delimiter="|",
-            quoting=csv.QUOTE_NONE,
-            escapechar="\\"
-        )
+    for _, r in today_df.iterrows():
 
-        writer.writeheader()
+        supplier_best = r["_supplier"]
 
-        for _, r in today_df.iterrows():
+        peso_val = SUPPLIER_WEIGHT.get(supplier_best)
+        if peso_val is not None:
+            r["peso"] = "24" + str(int(round(float(peso_val) * 100)))
+        else:
+            r["peso"] = "24"
 
-            supplier_best = r["_supplier"]
+        r = r.to_dict()
 
-            peso_val = SUPPLIER_WEIGHT.get(supplier_best)
-            if peso_val is not None:
-                r["peso"] = "24" + str(int(round(float(peso_val) * 100)))
-            else:
-                r["peso"] = "24"
+        # rimuovi colonne tecniche
+        for col in ["_price", "_supplier", "_original_sku"]:
+            r.pop(col, None)
 
-            r = r.to_dict()
+        rows_final.append(r)
 
-            # Rimuovi colonne tecniche
-            for col in ["_price", "_supplier", "_original_sku", "status", "stock_trend"]:
-                r.pop(col, None)
+    # ordina per EAN per evitare falsi cambiamenti
+    rows_final_sorted = sorted(rows_final, key=lambda x: x.get("ean", ""))
 
-            writer.writerow(r)
+    output_csv = []
+    output_csv.append("|".join(fields))
+    for r in rows_final_sorted:
+        line = "|".join(str(r.get(f, "")) for f in fields)
+        output_csv.append(line)
+    final_bytes = "\n".join(output_csv).encode("utf-8")
 
-    print(f"\n📝 Feed generato: {OUTPUT_FILE}")
+    # --------------------------
+    # CONTROLLO HASH
+    # --------------------------
+
+    if os.path.exists(OUTPUT_FILE):
+        with open(OUTPUT_FILE,'rb') as f:
+            old_bytes = f.read()
+        if hashlib.md5(old_bytes).hexdigest() == hashlib.md5(final_bytes).hexdigest():
+            print("⏭ Nessun cambiamento reale → skip")
+            return
+
+    # --------------------------
+    # SCRITTURA FILE
+    # --------------------------
+
+    with open(OUTPUT_FILE, "wb") as f:
+        f.write(final_bytes)
+
+    print(f"📝 Feed aggiornato: {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     main()
