@@ -1,4 +1,4 @@
-name: Build Feed (Force Upload Definitivo)
+name: Build Feed (Drive Update Only)
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -48,44 +48,12 @@ jobs:
           print("✅ Service account JSON valido")
           EOF
 
-      # 6️⃣ Scarica snapshot precedente (se esiste)
-      - name: Download snapshot artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: daily-snapshot
-          path: daily_snapshots
-        continue-on-error: true
-
-      - name: Verifica snapshot
-        run: |
-          echo "📁 Contenuto snapshot:"
-          ls -l daily_snapshots || true
-
-      # 7️⃣ Genera feed
+      # 6️⃣ Genera feed
       - name: Generate filtered feed
         run: python process_and_upload.py
 
-      # 8️⃣ Carica snapshot aggiornato
-      - name: Upload snapshot artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-snapshot
-          path: daily_snapshots
-
-      # 9️⃣ Controllo se il feed è cambiato
-      - name: Check if feed changed
-        id: feedcheck
-        run: |
-          git config --global --add safe.directory $GITHUB_WORKSPACE
-          if git diff --quiet feed_poleepo.csv; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-          else
-            echo "changed=true" >> $GITHUB_OUTPUT
-          fi
-
-      # 🔟 Upload su Google Drive solo se cambiato
+      # 7️⃣ Upload su Google Drive (solo se il file è cambiato)
       - name: Upload feed to Google Drive
-        if: steps.feedcheck.outputs.changed == 'true'
         env:
           FILE_ID: "1DuupFBUm6pfjEZp7js6WDqDfJSLEda5r"
         run: |
@@ -93,28 +61,41 @@ jobs:
           from google.oauth2 import service_account
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
-          import os
+          import os, hashlib
 
           FILE_ID = os.environ["FILE_ID"]
 
+          # controllo hash
+          new_bytes = open("feed_poleepo.csv", "rb").read()
           creds = service_account.Credentials.from_service_account_file(
               "sa.json",
               scopes=["https://www.googleapis.com/auth/drive"]
           )
-
           service = build("drive", "v3", credentials=creds)
 
-          media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
-          service.files().update(fileId=FILE_ID, media_body=media).execute()
-          print("✅ File aggiornato su Google Drive")
+          # recupera file corrente da Drive
+          current_file = service.files().get(fileId=FILE_ID, fields="id,md5Checksum").execute()
+          current_md5 = current_file.get("md5Checksum", "")
+
+          # md5 locale
+          new_md5 = hashlib.md5(new_bytes).hexdigest()
+
+          if new_md5 != current_md5:
+              media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
+              service.files().update(fileId=FILE_ID, media_body=media).execute()
+              print("✅ File aggiornato su Google Drive")
+          else:
+              print("⏭ Nessun cambiamento reale → skip")
           EOF
 
-      # 1️⃣1️⃣ Commit feed solo se cambiato
+      # 8️⃣ Commit feed solo se cambiato
       - name: Commit feed only if changed
-        if: steps.feedcheck.outputs.changed == 'true'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add feed_poleepo.csv
-          git commit -m "Update feed" || echo "✅ Nessuna modifica da commit"
-          git push
+          if [ -n "$(git status --porcelain feed_poleepo.csv)" ]; then
+            git add feed_poleepo.csv
+            git commit -m "Update feed"
+            git push
+          else
+            echo "✅ Nessuna modifica da commit"
