@@ -65,20 +65,20 @@ jobs:
 
           FILE_ID = os.environ["FILE_ID"]
 
-          # controllo hash
-          new_bytes = open("feed_poleepo.csv", "rb").read()
+          # md5 del file locale
+          with open("feed_poleepo.csv", "rb") as f:
+              new_bytes = f.read()
+          new_md5 = hashlib.md5(new_bytes).hexdigest()
+
           creds = service_account.Credentials.from_service_account_file(
               "sa.json",
               scopes=["https://www.googleapis.com/auth/drive"]
           )
           service = build("drive", "v3", credentials=creds)
 
-          # recupera file corrente da Drive
+          # md5 del file corrente su Drive
           current_file = service.files().get(fileId=FILE_ID, fields="id,md5Checksum").execute()
           current_md5 = current_file.get("md5Checksum", "")
-
-          # md5 locale
-          new_md5 = hashlib.md5(new_bytes).hexdigest()
 
           if new_md5 != current_md5:
               media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
@@ -99,3 +99,4 @@ jobs:
             git push
           else
             echo "✅ Nessuna modifica da commit"
+          fi
