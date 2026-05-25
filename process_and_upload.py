@@ -22,7 +22,7 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura", "blueoptics"}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura", "blueoptics", "origin storage"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
