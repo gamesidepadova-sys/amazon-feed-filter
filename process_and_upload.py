@@ -14,15 +14,14 @@ import hashlib
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
-ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0381", "0382", "0383"}
+ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0393", "0382", "0383"}
 ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
-    "clima e brico",
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura", "blueoptics", "origin storage"}
+EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura", "blueoptics", "origin storage", "integral"}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
@@ -31,7 +30,7 @@ SUPPLIER_WEIGHT = {
     "0373": 99.73,
     "0374": 99.74,
     "0380": 99.80,
-    "0381": 99.81,
+    "0393": 99.93,
     "0382": 99.82,
     "0383": 99.83
 }
