@@ -111,42 +111,49 @@ def main():
     ean_groups = {}
 
     for r in rows_raw:
-        try:
-            sku = r.get("sku") or ""
-            supplier = supplier_from_sku(sku)
+    try:
+        sku = r.get("sku") or ""
+        supplier = supplier_from_sku(sku)
 
-            if supplier not in ALLOWED_SUPPLIERS:
-                continue
-
-            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
-            if cat1 not in ALLOWED_CAT1:
-                continue
-
-            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
-            if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
-                continue
-
-            qty = to_int(r.get("quantita") or r.get("qty"))
-            if qty < MIN_QTY:
-                continue
-
-            ean = clean_text(r.get("ean") or "")
-            if not valid_ean(ean):
-                continue
-
-            prezzo = to_float(r.get("prezzo_iva_esclusa"))
-            spedizione = to_float(r.get("costo_spedizione"))
-            prezzo_totale = prezzo + spedizione
-
-            row = {k: clean_text(r.get(k) or "") for k in fields}
-            row["_original_sku"] = sku
-            row["_price"] = prezzo_totale
-            row["_supplier"] = supplier
-
-            ean_groups.setdefault(ean, []).append(row)
-
-        except:
+        if supplier not in ALLOWED_SUPPLIERS:
             continue
+
+        cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+        if cat1 not in ALLOWED_CAT1:
+            continue
+
+        titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+            continue
+
+        qty = to_int(r.get("quantita") or r.get("qty"))
+        if qty < MIN_QTY:
+            continue
+
+        ean = clean_text(r.get("ean") or "")
+        if not valid_ean(ean):
+            continue
+
+        # ==================================================
+        # NUOVO FILTRO: immagine_principale deve iniziare con https://
+        # ==================================================
+        immagine = (r.get("immagine_principale") or "").strip()
+        if not immagine.startswith("https://"):
+            continue
+
+        prezzo = to_float(r.get("prezzo_iva_esclusa"))
+        spedizione = to_float(r.get("costo_spedizione"))
+        prezzo_totale = prezzo + spedizione
+
+        row = {k: clean_text(r.get(k) or "") for k in fields}
+        row["_original_sku"] = sku
+        row["_price"] = prezzo_totale
+        row["_supplier"] = supplier
+
+        ean_groups.setdefault(ean, []).append(row)
+
+    except:
+        continue
 
     # ==========================
     # SCELTA MIGLIORE PER EAN
