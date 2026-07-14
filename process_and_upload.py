@@ -21,7 +21,10 @@ ALLOWED_CAT1 = {
     "consumabili e ufficio",
     "salute, beauty e fitness",
 }
-EXCLUDE_TITLE_SUBSTRINGS = {"phs-memory", "montatura", "blueoptics", "origin storage", "integral"}
+EXCLUDE_TITLE_SUBSTRINGS = {
+    "phs-memory", "montatura", "blueoptics",
+    "origin storage", "integral"
+}
 MIN_QTY = 10
 MAX_DIFF_0373 = 20
 
@@ -97,9 +100,9 @@ def main():
     reader.fieldnames = [name.replace("\ufeff", "") for name in reader.fieldnames]
 
     fields = [
-        "cat1","sku","ean","mpn","quantita","prezzo_iva_esclusa",
-        "titolo_prodotto","immagine_principale","descrizione_prodotto",
-        "costo_spedizione","cat2","cat3","marca","peso"
+        "cat1", "sku", "ean", "mpn", "quantita", "prezzo_iva_esclusa",
+        "titolo_prodotto", "immagine_principale", "descrizione_prodotto",
+        "costo_spedizione", "cat2", "cat3", "marca", "peso"
     ]
 
     rows_raw = list(reader)
@@ -111,49 +114,49 @@ def main():
     ean_groups = {}
 
     for r in rows_raw:
-    try:
-        sku = r.get("sku") or ""
-        supplier = supplier_from_sku(sku)
+        try:
+            sku = r.get("sku") or ""
+            supplier = supplier_from_sku(sku)
 
-        if supplier not in ALLOWED_SUPPLIERS:
+            if supplier not in ALLOWED_SUPPLIERS:
+                continue
+
+            cat1 = norm(r.get("cat1") or r.get("categoria") or "")
+            if cat1 not in ALLOWED_CAT1:
+                continue
+
+            titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
+            if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
+                continue
+
+            qty = to_int(r.get("quantita") or r.get("qty"))
+            if qty < MIN_QTY:
+                continue
+
+            ean = clean_text(r.get("ean") or "")
+            if not valid_ean(ean):
+                continue
+
+            # ==================================================
+            # NUOVO FILTRO: immagine_principale deve iniziare con https://
+            # ==================================================
+            immagine = (r.get("immagine_principale") or "").strip()
+            if not immagine.startswith("https://"):
+                continue
+
+            prezzo = to_float(r.get("prezzo_iva_esclusa"))
+            spedizione = to_float(r.get("costo_spedizione"))
+            prezzo_totale = prezzo + spedizione
+
+            row = {k: clean_text(r.get(k) or "") for k in fields}
+            row["_original_sku"] = sku
+            row["_price"] = prezzo_totale
+            row["_supplier"] = supplier
+
+            ean_groups.setdefault(ean, []).append(row)
+
+        except:
             continue
-
-        cat1 = norm(r.get("cat1") or r.get("categoria") or "")
-        if cat1 not in ALLOWED_CAT1:
-            continue
-
-        titolo = norm(r.get("titolo_prodotto") or r.get("nome") or "")
-        if any(x in titolo for x in EXCLUDE_TITLE_SUBSTRINGS):
-            continue
-
-        qty = to_int(r.get("quantita") or r.get("qty"))
-        if qty < MIN_QTY:
-            continue
-
-        ean = clean_text(r.get("ean") or "")
-        if not valid_ean(ean):
-            continue
-
-        # ==================================================
-        # NUOVO FILTRO: immagine_principale deve iniziare con https://
-        # ==================================================
-        immagine = (r.get("immagine_principale") or "").strip()
-        if not immagine.startswith("https://"):
-            continue
-
-        prezzo = to_float(r.get("prezzo_iva_esclusa"))
-        spedizione = to_float(r.get("costo_spedizione"))
-        prezzo_totale = prezzo + spedizione
-
-        row = {k: clean_text(r.get(k) or "") for k in fields}
-        row["_original_sku"] = sku
-        row["_price"] = prezzo_totale
-        row["_supplier"] = supplier
-
-        ean_groups.setdefault(ean, []).append(row)
-
-    except:
-        continue
 
     # ==========================
     # SCELTA MIGLIORE PER EAN
@@ -162,7 +165,6 @@ def main():
     best_by_ean = {}
 
     for ean, rows in ean_groups.items():
-
         min_row = min(rows, key=lambda x: x["_price"])
         min_price = min_row["_price"]
 
@@ -188,7 +190,6 @@ def main():
     rows_final = []
 
     for _, r in today_df.iterrows():
-
         supplier_best = r["_supplier"]
 
         peso_val = SUPPLIER_WEIGHT.get(supplier_best)
@@ -210,9 +211,11 @@ def main():
 
     output_csv = []
     output_csv.append("|".join(fields))
+
     for r in rows_final_sorted:
         line = "|".join(str(r.get(f, "")) for f in fields)
         output_csv.append(line)
+
     final_bytes = "\n".join(output_csv).encode("utf-8")
 
     # --------------------------
@@ -220,7 +223,7 @@ def main():
     # --------------------------
 
     if os.path.exists(OUTPUT_FILE):
-        with open(OUTPUT_FILE,'rb') as f:
+        with open(OUTPUT_FILE, 'rb') as f:
             old_bytes = f.read()
         if hashlib.md5(old_bytes).hexdigest() == hashlib.md5(final_bytes).hexdigest():
             print("⏭ Nessun cambiamento reale → skip")
@@ -234,6 +237,7 @@ def main():
         f.write(final_bytes)
 
     print(f"📝 Feed aggiornato: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
     main()
