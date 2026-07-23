@@ -14,7 +14,7 @@ import hashlib
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
-ALLOWED_SUPPLIERS = {"0372", "0373", "0374", "0380", "0393", "0382", "0383"}
+ALLOWED_SUPPLIERS = {"0372", "0373", "0393", "0382", "0383"}
 ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
