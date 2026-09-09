@@ -11,7 +11,7 @@ import hashlib
 # CONFIG
 # =========================================================
 
-INPUT_URL = "http://listini.sellrapido.com/wh/_export_informaticatech_it.csv"
+INPUT_URL = "https://listini.sellrapido.com/wh/easytech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
 ALLOWED_SUPPLIERS = {"0429", "0435"}
