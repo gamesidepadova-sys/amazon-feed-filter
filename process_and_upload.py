@@ -14,7 +14,7 @@ import hashlib
 INPUT_URL = "https://listini.sellrapido.com/wh/easytech_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
 
-ALLOWED_SUPPLIERS = {"0429", "0435"}
+ALLOWED_SUPPLIERS = {"0429", "0432", "0433", "0434", "0435"}
 
 ALLOWED_CAT1 = {
     "informatica",
@@ -32,11 +32,14 @@ EXCLUDE_TITLE_SUBSTRINGS = {
 }
 
 MIN_QTY = 10
-MAX_DIFF_0373 = 20
+MAX_DIFF_0434 = 20
 
 SUPPLIER_WEIGHT = {
     "0429": 99.29,
-    "0335": 99.35,
+    "0432": 99.32,
+    "0433": 99.33,
+    "0434": 99.34,
+    "0435": 99.35,  
 }
 
 # =========================================================
@@ -297,29 +300,29 @@ def main():
         min_price = min_row["_price"]
 
         # -------------------------------------------------
-        # CERCA 0373 TRA I FORNITORI DISPONIBILI
+        # CERCA 0434 TRA I FORNITORI DISPONIBILI
         # -------------------------------------------------
 
-        rows_0373 = [
+        rows_0434 = [
             r for r in available_rows
-            if r["_supplier"] == "0373"
+            if r["_supplier"] == "0434"
         ]
 
-        if rows_0373:
+        if rows_0434:
 
-            # Se ci fossero più righe 0373 per lo stesso EAN,
+            # Se ci fossero più righe 0434 per lo stesso EAN,
             # prendiamo quella col prezzo totale più basso.
-            row_0373 = min(
-                rows_0373,
+            row_0434 = min(
+                rows_0434,
                 key=lambda x: x["_price"]
             )
 
-            # 0373 viene preferito se il suo prezzo totale
+            # 0434 viene preferito se il suo prezzo totale
             # non supera di più di 20 € il prezzo migliore.
-            if row_0373["_price"] <= (
-                min_price + MAX_DIFF_0373
+            if row_0434["_price"] <= (
+                min_price + MAX_DIFF_0434
             ):
-                best_row = row_0373
+                best_row = row_0434
             else:
                 best_row = min_row
 
