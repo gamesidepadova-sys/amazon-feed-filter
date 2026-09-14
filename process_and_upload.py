@@ -30,6 +30,8 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "integral",
     "coreparts",
     "InLine"
+    "battery"
+    "Fellowes"
 }
 
 EXCLUDE_CAT2_SUBSTRINGS = {
