@@ -50,6 +50,24 @@ jobs:
       - name: Generate filtered feed
         run: python process_and_upload.py
 
+      - name: Debug encoding feed
+        run: |
+        python3 - << 'EOF'
+        with open("feed_poleepo.csv", "rb") as f:
+            data = f.read()
+
+        print("Primi byte:", data[:100])
+
+        text = data.decode("utf-8")
+        print("UTF-8 valido: SI")
+
+        for line in text.splitlines():
+            if "0000002020006" in line:
+                print("RIGA EAN 0000002020006:")
+                print(line)
+                break
+        EOF        
+
       # 7️⃣ Upload su Google Drive (solo se il file è cambiato)
       - name: Upload feed to Google Drive
         env:
