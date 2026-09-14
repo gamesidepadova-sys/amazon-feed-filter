@@ -20,7 +20,6 @@ ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
     "consumabili e ufficio",
-    "salute, beauty e fitness",
 }
 
 EXCLUDE_TITLE_SUBSTRINGS = {
@@ -28,7 +27,75 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "montatura",
     "blueoptics",
     "origin storage",
-    "integral"
+    "integral",
+    "coreparts",
+}
+
+EXCLUDE_CAT2_SUBSTRINGS = {
+    "consumabili",
+    "audio",
+}
+
+EXCLUDE_CAT2_EXACT = {
+    "video digitale",
+    "televisori",
+    "home cinema",
+    "bellezza e cura del corpo",
+    "cura dei capelli",
+    "tutto salute, beauty e fitness",
+    "fitness technology",
+    "ufficio",
+    "scuola",
+}
+
+EXCLUDE_CAT3_SUBSTRINGS = {
+    "software",
+    "stampanti",
+    "alimentatori",
+    "scanner",
+    "borse e custodie",
+    "cartucce",
+}
+
+# Per "Cavi E Accessori" vengono mantenute SOLO queste marche
+ALLOWED_BRANDS_CAT2 = {
+    "cavi e accessori": {
+        "adata",
+        "asrock",
+        "asus",
+        "corsair",
+        "crucial",
+        "digitus",
+        "fujitsu",
+        "fujitsu technology solutions",
+        "g.skill",
+        "gigabyte",
+        "hp",
+        "hp enterprise",
+        "hpe",
+        "intel",
+        "intellinet",
+        "intenso",
+        "kingston",
+        "kingston technology",
+        "lexar",
+        "nvidia",
+        "patriot memory",
+        "samsung",
+        "sandisk",
+        "sapphire",
+        "seagate",
+        "sharkoon",
+        "team group",
+        "toshiba",
+        "transcend",
+        "ubiquiti",
+        "verbatim",
+        "viewsonic",
+        "xiaomi",
+        "zebra",
+        "zyxel",
+    },
 }
 
 MIN_QTY = 10
@@ -39,7 +106,7 @@ SUPPLIER_WEIGHT = {
     "0432": 99.32,
     "0433": 99.33,
     "0434": 99.34,
-    "0435": 99.35,  
+    "0435": 99.35,
 }
 
 # =========================================================
@@ -167,17 +234,76 @@ def main():
             if cat1 not in ALLOWED_CAT1:
                 continue
 
+            # -------------------------------------------------
+            # CATEGORIE / TITOLO / MARCA
+            # -------------------------------------------------
+
+            cat2 = norm(
+                r.get("cat2") or ""
+            )
+
+            cat3 = norm(
+                r.get("cat3") or ""
+            )
+
+            marca = norm(
+                r.get("marca") or ""
+            )
+
             titolo = norm(
                 r.get("titolo_prodotto")
                 or r.get("nome")
                 or ""
             )
 
+            # -------------------------------------------------
+            # ESCLUSIONI TITOLO
+            # -------------------------------------------------
+
             if any(
                 x in titolo
                 for x in EXCLUDE_TITLE_SUBSTRINGS
             ):
                 continue
+
+            # -------------------------------------------------
+            # ESCLUSIONI CAT2 PER PAROLA
+            # -------------------------------------------------
+
+            if any(
+                x in cat2
+                for x in EXCLUDE_CAT2_SUBSTRINGS
+            ):
+                continue
+
+            # -------------------------------------------------
+            # ESCLUSIONI CAT2 ESATTE
+            # -------------------------------------------------
+
+            if cat2 in EXCLUDE_CAT2_EXACT:
+                continue
+
+            # -------------------------------------------------
+            # ESCLUSIONI CAT3 PER PAROLA
+            # -------------------------------------------------
+
+            if any(
+                x in cat3
+                for x in EXCLUDE_CAT3_SUBSTRINGS
+            ):
+                continue
+
+            # -------------------------------------------------
+            # CAVI E ACCESSORI
+            #
+            # Se cat2 = "Cavi E Accessori",
+            # vengono mantenute SOLO le marche autorizzate.
+            # -------------------------------------------------
+
+            if cat2 in ALLOWED_BRANDS_CAT2:
+
+                if marca not in ALLOWED_BRANDS_CAT2[cat2]:
+                    continue
 
             # -------------------------------------------------
             # GIACENZA DEL SINGOLO FORNITORE
