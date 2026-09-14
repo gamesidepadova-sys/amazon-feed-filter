@@ -290,13 +290,23 @@ def norm(s: str):
         s or ""
     ).strip().lower()
 
+def fix_mojibake(text: str):
+    t = str(text or "")
+    if not any(x in t for x in ("Ã", "Â", "â", "ð")):
+        return t
+    try:
+        return t.encode("latin1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return t
 
 def clean_text(text: str):
 
     t = str(
         text or ""
     )
-
+      
+    t = fix_mojibake(t)
+    
     t = re.sub(
         "<.*?>",
         " ",
