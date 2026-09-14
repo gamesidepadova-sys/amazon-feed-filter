@@ -4,7 +4,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
-  workflow_dispatch:  
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -50,23 +50,10 @@ jobs:
       - name: Generate filtered feed
         run: python process_and_upload.py
 
+      # 🔎 DEBUG ENCODING
       - name: Debug encoding feed
         run: |
-        python3 - << 'EOF'
-        with open("feed_poleepo.csv", "rb") as f:
-            data = f.read()
-
-        print("Primi byte:", data[:100])
-
-        text = data.decode("utf-8")
-        print("UTF-8 valido: SI")
-
-        for line in text.splitlines():
-            if "0000002020006" in line:
-                print("RIGA EAN 0000002020006:")
-                print(line)
-                break
-        EOF        
+          python3 -c "data=open('feed_poleepo.csv','rb').read(); print('Primi byte:', data[:100]); text=data.decode('utf-8'); print('UTF-8 valido: SI'); [print('RIGA EAN 0000002020006:', line) for line in text.splitlines() if '0000002020006' in line]"
 
       # 7️⃣ Upload su Google Drive (solo se il file è cambiato)
       - name: Upload feed to Google Drive
@@ -93,12 +80,25 @@ jobs:
           service = build("drive", "v3", credentials=creds)
 
           # md5 del file corrente su Drive
-          current_file = service.files().get(fileId=FILE_ID, fields="id,md5Checksum").execute()
+          current_file = service.files().get(
+              fileId=FILE_ID,
+              fields="id,md5Checksum"
+          ).execute()
+
           current_md5 = current_file.get("md5Checksum", "")
 
           if new_md5 != current_md5:
-              media = MediaFileUpload("feed_poleepo.csv", mimetype="text/csv", resumable=False)
-              service.files().update(fileId=FILE_ID, media_body=media).execute()
+              media = MediaFileUpload(
+                  "feed_poleepo.csv",
+                  mimetype="text/csv",
+                  resumable=False
+              )
+
+              service.files().update(
+                  fileId=FILE_ID,
+                  media_body=media
+              ).execute()
+
               print("✅ File aggiornato su Google Drive")
           else:
               print("⏭ Nessun cambiamento reale → skip")
@@ -109,6 +109,7 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
           if [ -n "$(git status --porcelain feed_poleepo.csv)" ]; then
             git add feed_poleepo.csv
             git commit -m "Update feed"
