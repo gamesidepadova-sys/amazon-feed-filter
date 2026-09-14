@@ -33,7 +33,7 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "battery"
     "Fellowes"
     "ricambio"
-    "delock"
+    "Delock"
 }
 
 EXCLUDE_CAT2_SUBSTRINGS = {
