@@ -5,7 +5,6 @@ import io
 import re
 import os
 import pandas as pd
-import hashlib
 
 # =========================================================
 # CONFIG
@@ -13,14 +12,35 @@ import hashlib
 
 INPUT_URL = "http://listini.sellrapido.com/wh/_export_easytechonline_it.csv"
 OUTPUT_FILE = "feed_poleepo.csv"
+DAILY_DIR = "daily_snapshots"
 
-ALLOWED_SUPPLIERS = {"0429", "0432", "0433", "0434", "0435"}
+os.makedirs(DAILY_DIR, exist_ok=True)
+
+# =========================================================
+# FORNITORI
+# =========================================================
+
+ALLOWED_SUPPLIERS = {
+    "0429",
+    "0432",
+    "0433",
+    "0434",
+    "0435",
+}
+
+# =========================================================
+# CATEGORIE PRINCIPALI
+# =========================================================
 
 ALLOWED_CAT1 = {
     "informatica",
     "audio e tv",
     "consumabili e ufficio",
 }
+
+# =========================================================
+# ESCLUSIONI TITOLO
+# =========================================================
 
 EXCLUDE_TITLE_SUBSTRINGS = {
     "phs-memory",
@@ -36,7 +56,10 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "delock",
 }
 
-# Marche da escludere sempre, indipendentemente dalla categoria
+# =========================================================
+# ESCLUSIONI MARCHE GLOBALI
+# =========================================================
+
 EXCLUDE_BRANDS = {
     "bluelan",
     "blueoptics",
@@ -49,6 +72,10 @@ EXCLUDE_BRANDS = {
     "pdt",
     "one for all",
 }
+
+# =========================================================
+# ESCLUSIONI CAT2
+# =========================================================
 
 EXCLUDE_CAT2_SUBSTRINGS = {
     "consumabili",
@@ -67,6 +94,10 @@ EXCLUDE_CAT2_EXACT = {
     "scuola",
 }
 
+# =========================================================
+# ESCLUSIONI CAT3
+# =========================================================
+
 EXCLUDE_CAT3_SUBSTRINGS = {
     "software",
     "stampanti",
@@ -76,7 +107,11 @@ EXCLUDE_CAT3_SUBSTRINGS = {
     "cartucce",
 }
 
-# Per "Cavi E Accessori" vengono mantenute SOLO queste marche
+# =========================================================
+# CAVI E ACCESSORI:
+# SOLO QUESTE MARCHE
+# =========================================================
+
 ALLOWED_BRANDS_CAT3 = {
     "cavi e accessori": {
         "adata",
@@ -120,6 +155,10 @@ ALLOWED_BRANDS_CAT3 = {
 MIN_QTY = 10
 MAX_DIFF_0434 = 20
 
+# =========================================================
+# PESO / MARCATORE POLEEPO
+# =========================================================
+
 SUPPLIER_WEIGHT = {
     "0429": 99.29,
     "0432": 99.32,
@@ -132,54 +171,310 @@ SUPPLIER_WEIGHT = {
 # UTILS
 # =========================================================
 
+def today_tag(prefix):
+    return f"{prefix}_{date.today().strftime('%Y%m%d')}"
+
+
+def is_first_run_today():
+    today = date.today().isoformat()
+    expected = f"snapshot_{today}.csv"
+    return expected not in os.listdir(DAILY_DIR)
+
+
+def no_snapshot_exists_yet():
+    return len(os.listdir(DAILY_DIR)) == 0
+
+
+def save_daily_snapshot(df):
+    today = date.today().isoformat()
+    df.to_csv(
+        f"{DAILY_DIR}/snapshot_{today}.csv",
+        index=False
+    )
+
+
+# =========================================================
+# CARICAMENTO SNAPSHOT PRECEDENTE
+# =========================================================
+
+def load_yesterday_snapshot():
+
+    files = sorted(
+        os.listdir(DAILY_DIR)
+    )
+
+    if not files:
+        print(
+            "⚠️ Nessuno snapshot precedente trovato. Nessun tag oggi."
+        )
+        return None
+
+    path = f"{DAILY_DIR}/{files[-1]}"
+
+    if os.path.getsize(path) == 0:
+        print(
+            f"⚠️ Snapshot vuoto ({path}). Nessun tag oggi."
+        )
+        return None
+
+    try:
+        return pd.read_csv(path)
+
+    except pd.errors.EmptyDataError:
+        print(
+            f"⚠️ Snapshot non leggibile ({path}). Nessun tag oggi."
+        )
+        return None
+
+
+# =========================================================
+# CONVERSIONI
+# =========================================================
+
 def to_int(x, default=0):
+
     try:
         s = str(x or "").strip()
+
         if not s:
             return default
-        s = s.replace(".", "").replace(",", ".")
+
+        s = s.replace(
+            ".",
+            ""
+        ).replace(
+            ",",
+            "."
+        )
+
         return int(float(s))
+
     except:
         return default
 
 
 def to_float(x, default=0.0):
+
     try:
         s = str(x or "").strip()
+
         if not s:
             return default
-        s = s.replace(",", ".")
+
+        s = s.replace(
+            ",",
+            "."
+        )
+
         return float(s)
+
     except:
         return default
 
 
-def supplier_from_sku(sku: str) -> str:
-    parts = (sku or "").strip().split("_")
+def supplier_from_sku(sku: str):
+
+    parts = (
+        sku or ""
+    ).strip().split("_")
+
     if len(parts) >= 3:
         return parts[1]
+
     return ""
 
 
-def norm(s: str) -> str:
-    return str(s or "").strip().lower()
+def norm(s: str):
+
+    return str(
+        s or ""
+    ).strip().lower()
 
 
-def clean_text(text: str) -> str:
-    t = str(text or "")
-    t = re.sub("<.*?>", " ", t)
-    t = t.replace("&nbsp;", " ")
-    t = t.replace('"', "")
-    t = t.replace("|", " ")
-    t = t.replace("\n", " ")
-    t = t.replace("\r", " ")
-    t = re.sub(" +", " ", t)
+def clean_text(text: str):
+
+    t = str(
+        text or ""
+    )
+
+    t = re.sub(
+        "<.*?>",
+        " ",
+        t
+    )
+
+    t = t.replace(
+        "&nbsp;",
+        " "
+    )
+
+    t = t.replace(
+        '"',
+        ""
+    )
+
+    t = t.replace(
+        "|",
+        " "
+    )
+
+    t = t.replace(
+        "\n",
+        " "
+    )
+
+    t = t.replace(
+        "\r",
+        " "
+    )
+
+    t = re.sub(
+        " +",
+        " ",
+        t
+    )
+
     return t.strip()
 
 
-def valid_ean(ean: str) -> bool:
-    e = (ean or "").strip()
-    return e.isdigit() and 8 <= len(e) <= 14
+def valid_ean(ean: str):
+
+    e = (
+        ean or ""
+    ).strip()
+
+    return (
+        e.isdigit()
+        and 8 <= len(e) <= 14
+    )
+
+
+# =========================================================
+# TAG LOGIC
+# =========================================================
+
+def detect_new(today_df, yesterday_df):
+
+    if yesterday_df is None:
+
+        today_df["status"] = "UNCHANGED"
+
+        return today_df
+
+    yesterday_eans = set(
+        yesterday_df["ean"]
+    )
+
+    today_df["status"] = today_df[
+        "ean"
+    ].apply(
+        lambda e:
+        "NEW"
+        if e not in yesterday_eans
+        else "UNCHANGED"
+    )
+
+    return today_df
+
+
+def detect_stock_trend(
+    today_df,
+    yesterday_df
+):
+
+    if yesterday_df is None:
+
+        today_df[
+            "stock_trend"
+        ] = "UNCHANGED"
+
+        return today_df
+
+    merged = today_df.merge(
+        yesterday_df[
+            [
+                "ean",
+                "quantita"
+            ]
+        ],
+        on="ean",
+        how="left",
+        suffixes=(
+            "",
+            "_yesterday"
+        )
+    )
+
+    def trend(row):
+
+        if pd.isna(
+            row["quantita_yesterday"]
+        ):
+            return "UNCHANGED"
+
+        if (
+            row["quantita"] > 14
+            and
+            row["quantita_yesterday"] <= 14
+        ):
+            return "RECOVERED"
+
+        if (
+            row["quantita"]
+            >
+            row["quantita_yesterday"]
+        ):
+            return "INCREASED"
+
+        return "UNCHANGED"
+
+    merged[
+        "stock_trend"
+    ] = merged.apply(
+        trend,
+        axis=1
+    )
+
+    return merged
+
+
+def apply_tags(df):
+
+    df["tag"] = ""
+
+    new_tag = today_tag(
+        "new"
+    )
+
+    mod_tag = today_tag(
+        "mod"
+    )
+
+    for idx, row in df.iterrows():
+
+        tags = []
+
+        if row["status"] == "NEW":
+            tags.append(
+                new_tag
+            )
+
+        if row[
+            "stock_trend"
+        ] in (
+            "RECOVERED",
+            "INCREASED"
+        ):
+            tags.append(
+                mod_tag
+            )
+
+        df.at[
+            idx,
+            "tag"
+        ] = ",".join(tags)
+
+    return df
 
 
 # =========================================================
@@ -188,11 +483,17 @@ def valid_ean(ean: str) -> bool:
 
 def main():
 
-    print("📥 Scarico feed originale...")
+    print(
+        "📥 Scarico feed originale..."
+    )
 
-    resp = requests.get(INPUT_URL)
+    resp = requests.get(
+        INPUT_URL
+    )
+
     resp.raise_for_status()
 
+    # IDENTICO ALLO SCRIPT CHE FUNZIONAVA
     text = resp.content.decode(
         "utf-8-sig",
         errors="replace"
@@ -204,7 +505,10 @@ def main():
     )
 
     reader.fieldnames = [
-        name.replace("\ufeff", "")
+        name.replace(
+            "\ufeff",
+            ""
+        )
         for name in reader.fieldnames
     ]
 
@@ -225,7 +529,9 @@ def main():
         "peso"
     ]
 
-    rows_raw = list(reader)
+    rows_raw = list(
+        reader
+    )
 
     # =====================================================
     # RAGGRUPPAMENTO PER EAN
@@ -237,12 +543,20 @@ def main():
 
         try:
 
-            sku = r.get("sku") or ""
+            sku = r.get(
+                "sku"
+            ) or ""
 
-            supplier = supplier_from_sku(sku)
+            supplier = supplier_from_sku(
+                sku
+            )
 
             if supplier not in ALLOWED_SUPPLIERS:
                 continue
+
+            # -------------------------------------------------
+            # CAT1
+            # -------------------------------------------------
 
             cat1 = norm(
                 r.get("cat1")
@@ -254,29 +568,44 @@ def main():
                 continue
 
             # -------------------------------------------------
-            # CATEGORIE / TITOLO / MARCA
+            # CAT2 / CAT3 / MARCA
             # -------------------------------------------------
 
             cat2 = norm(
-                r.get("cat2") or ""
+                r.get("cat2")
+                or ""
             )
 
             cat3 = norm(
-                r.get("cat3") or ""
+                r.get("cat3")
+                or ""
             )
 
             marca = norm(
-                r.get("marca") or ""
+                r.get("marca")
+                or ""
             )
+
+            # -------------------------------------------------
+            # TITOLO
+            # -------------------------------------------------
+
+            titolo = norm(
+                r.get(
+                    "titolo_prodotto"
+                )
+                or r.get(
+                    "nome"
+                )
+                or ""
+            )
+
+            # -------------------------------------------------
+            # ESCLUSIONE MARCHE GLOBALI
+            # -------------------------------------------------
 
             if marca in EXCLUDE_BRANDS:
                 continue
-            
-            titolo = norm(
-                r.get("titolo_prodotto")
-                or r.get("nome")
-                or ""
-            )
 
             # -------------------------------------------------
             # ESCLUSIONI TITOLO
@@ -289,7 +618,7 @@ def main():
                 continue
 
             # -------------------------------------------------
-            # ESCLUSIONI CAT2 PER PAROLA
+            # ESCLUSIONI CAT2
             # -------------------------------------------------
 
             if any(
@@ -298,15 +627,11 @@ def main():
             ):
                 continue
 
-            # -------------------------------------------------
-            # ESCLUSIONI CAT2 ESATTE
-            # -------------------------------------------------
-
             if cat2 in EXCLUDE_CAT2_EXACT:
                 continue
 
             # -------------------------------------------------
-            # ESCLUSIONI CAT3 PER PAROLA
+            # ESCLUSIONI CAT3
             # -------------------------------------------------
 
             if any(
@@ -317,24 +642,18 @@ def main():
 
             # -------------------------------------------------
             # CAVI E ACCESSORI
-            #
-            # Se cat3 = "Cavi E Accessori",
-            # vengono mantenute SOLO le marche autorizzate.
+            # SOLO MARCHE AUTORIZZATE
             # -------------------------------------------------
 
             if cat3 in ALLOWED_BRANDS_CAT3:
 
-                if marca not in ALLOWED_BRANDS_CAT3[cat3]:
+                if marca not in ALLOWED_BRANDS_CAT3[
+                    cat3
+                ]:
                     continue
 
             # -------------------------------------------------
-            # GIACENZA DEL SINGOLO FORNITORE
-            #
-            # Se questo fornitore ha meno di 10 pezzi,
-            # viene esclusa SOLO QUESTA RIGA.
-            #
-            # Se esiste un altro fornitore con lo stesso EAN
-            # e >= 10 pezzi, quell'altro rimane candidato.
+            # QUANTITA'
             # -------------------------------------------------
 
             qty = to_int(
@@ -345,8 +664,13 @@ def main():
             if qty < MIN_QTY:
                 continue
 
+            # -------------------------------------------------
+            # EAN
+            # -------------------------------------------------
+
             ean = clean_text(
-                r.get("ean") or ""
+                r.get("ean")
+                or ""
             )
 
             if not valid_ean(ean):
@@ -356,12 +680,16 @@ def main():
             # IMMAGINE
             # -------------------------------------------------
 
-            immagine = (
-                r.get("immagine_principale")
+            image = (
+                r.get(
+                    "immagine_principale"
+                )
                 or ""
             ).strip()
 
-            if not immagine.startswith("https://"):
+            if not image.startswith(
+                "https://"
+            ):
                 continue
 
             # -------------------------------------------------
@@ -369,40 +697,42 @@ def main():
             # -------------------------------------------------
 
             prezzo = to_float(
-                r.get("prezzo_iva_esclusa")
+                r.get(
+                    "prezzo_iva_esclusa"
+                )
             )
 
             spedizione = to_float(
-                r.get("costo_spedizione")
+                r.get(
+                    "costo_spedizione"
+                )
             )
 
-            # Prezzo utilizzato per confrontare i fornitori
-            prezzo_totale = prezzo + spedizione
+            prezzo_totale = (
+                prezzo
+                +
+                spedizione
+            )
 
             # -------------------------------------------------
-            # RIGA ORIGINALE
+            # RIGA
             # -------------------------------------------------
 
             row = {
                 k: clean_text(
-                    r.get(k) or ""
+                    r.get(k)
+                    or ""
                 )
                 for k in fields
             }
 
-            # Manteniamo la quantità originale
-            row["quantita"] = str(qty)
+            row["quantita"] = qty
 
-            # Manteniamo il prezzo originale
-            row["prezzo_iva_esclusa"] = clean_text(
-                r.get("prezzo_iva_esclusa") or ""
-            )
-
-            # Dati interni
             row["_original_sku"] = sku
-            row["_supplier"] = supplier
-            row["_qty"] = qty
+
             row["_price"] = prezzo_totale
+
+            row["_supplier"] = supplier
 
             ean_groups.setdefault(
                 ean,
@@ -424,189 +754,193 @@ def main():
             continue
 
         # -------------------------------------------------
-        # A questo punto tutte le righe hanno già
-        # quantità >= MIN_QTY.
-        # -------------------------------------------------
-
-        available_rows = [
-            r for r in rows
-            if r["_qty"] >= MIN_QTY
-        ]
-
-        if not available_rows:
-            continue
-
-        # -------------------------------------------------
-        # PREZZO TOTALE PIÙ BASSO
+        # PREZZO MINIMO
         # -------------------------------------------------
 
         min_row = min(
-            available_rows,
-            key=lambda x: x["_price"]
+            rows,
+            key=lambda x:
+            x["_price"]
         )
 
-        min_price = min_row["_price"]
-
-        # -------------------------------------------------
-        # CERCA 0434 TRA I FORNITORI DISPONIBILI
-        # -------------------------------------------------
-
-        rows_0434 = [
-            r for r in available_rows
-            if r["_supplier"] == "0434"
+        min_price = min_row[
+            "_price"
         ]
 
-        if rows_0434:
+        # -------------------------------------------------
+        # PRIORITA' 0434
+        # -------------------------------------------------
 
-            # Se ci fossero più righe 0434 per lo stesso EAN,
-            # prendiamo quella col prezzo totale più basso.
-            row_0434 = min(
-                rows_0434,
-                key=lambda x: x["_price"]
-            )
+        row_0434 = min(
+            (
+                r
+                for r in rows
+                if r["_supplier"] == "0434"
+            ),
+            key=lambda x:
+            x["_price"],
+            default=None
+        )
 
-            # 0434 viene preferito se il suo prezzo totale
-            # non supera di più di 20 € il prezzo migliore.
-            if row_0434["_price"] <= (
-                min_price + MAX_DIFF_0434
-            ):
-                best_row = row_0434
-            else:
-                best_row = min_row
+        if (
+            row_0434
+            and
+            row_0434["_price"]
+            <= min_price + MAX_DIFF_0434
+        ):
+            best_row = row_0434
 
         else:
-
             best_row = min_row
 
-        # -------------------------------------------------
-        # CONTROLLO DI SICUREZZA
-        # -------------------------------------------------
-
-        if best_row["_qty"] < MIN_QTY:
-            continue
-
-        best_by_ean[ean] = best_row
+        best_by_ean[
+            ean
+        ] = best_row
 
     # =====================================================
-    # GENERAZIONE FILE FINALE
+    # TAG + SNAPSHOT
     # =====================================================
 
     today_df = pd.DataFrame(
         best_by_ean.values()
     )
 
-    rows_final = []
+    yesterday_df = load_yesterday_snapshot()
 
-    for _, r in today_df.iterrows():
+    today_df = detect_new(
+        today_df,
+        yesterday_df
+    )
 
-        supplier_best = r["_supplier"]
+    today_df = detect_stock_trend(
+        today_df,
+        yesterday_df
+    )
 
-        peso_val = SUPPLIER_WEIGHT.get(
-            supplier_best
+    # -----------------------------------------------------
+    # LOGICA DEFINITIVA
+    # -----------------------------------------------------
+
+    if no_snapshot_exists_yet():
+
+        print(
+            "🟡 Nessuno snapshot precedente → "
+            "salvo snapshot base senza tag"
         )
 
-        if peso_val is not None:
+        today_df["tag"] = ""
 
-            r["peso"] = (
-                "24"
-                + str(
-                    int(
-                        round(
-                            float(peso_val) * 100
-                        )
-                    )
-                )
-            )
-
-        else:
-
-            r["peso"] = "24"
-
-        r = r.to_dict()
-
-        # -------------------------------------------------
-        # RIMUOVI COLONNE TECNICHE
-        # -------------------------------------------------
-
-        for col in [
-            "_price",
-            "_supplier",
-            "_original_sku",
-            "_qty"
-        ]:
-            r.pop(col, None)
-
-        rows_final.append(r)
-
-    # =====================================================
-    # ORDINA PER EAN
-    # =====================================================
-
-    rows_final_sorted = sorted(
-        rows_final,
-        key=lambda x: x.get("ean", "")
-    )
-
-    # =====================================================
-    # COSTRUZIONE CSV
-    # =====================================================
-
-    output_csv = []
-
-    output_csv.append(
-        "|".join(fields)
-    )
-
-    for r in rows_final_sorted:
-
-        line = "|".join(
-            str(r.get(f, ""))
-            for f in fields
+        save_daily_snapshot(
+            today_df
         )
 
-        output_csv.append(line)
+    elif is_first_run_today():
 
-    final_bytes = (
-        "\n".join(output_csv)
-        .encode("utf-8")
-    )
+        print(
+            "🟢 Primo run del giorno → "
+            "assegno i tag"
+        )
 
-    # =====================================================
-    # CONTROLLO HASH
-    # =====================================================
+        today_df = apply_tags(
+            today_df
+        )
 
-    if os.path.exists(OUTPUT_FILE):
+        save_daily_snapshot(
+            today_df
+        )
 
-        with open(
-            OUTPUT_FILE,
-            "rb"
-        ) as f:
-            old_bytes = f.read()
+    else:
 
-        if (
-            hashlib.md5(old_bytes).hexdigest()
-            ==
-            hashlib.md5(final_bytes).hexdigest()
-        ):
-            print(
-                "⏭ Nessun cambiamento reale → skip"
-            )
-            return
+        print(
+            "⚪ Run successivo → "
+            "niente tag, niente snapshot"
+        )
+
+        today_df["tag"] = ""
 
     # =====================================================
-    # SCRITTURA FILE
+    # SCRITTURA FILE FINALE
     # =====================================================
 
     with open(
         OUTPUT_FILE,
-        "wb"
-    ) as f:
-        f.write(final_bytes)
+        "w",
+        encoding="utf-8",
+        newline=""
+    ) as out:
+
+        writer = csv.DictWriter(
+            out,
+            fieldnames=fields + ["tag"],
+            delimiter="|",
+            quoting=csv.QUOTE_NONE,
+            escapechar="\\"
+        )
+
+        writer.writeheader()
+
+        for _, r in today_df.iterrows():
+
+            supplier_best = r[
+                "_supplier"
+            ]
+
+            peso_val = SUPPLIER_WEIGHT.get(
+                supplier_best
+            )
+
+            if peso_val is not None:
+
+                r["peso"] = (
+                    "24"
+                    +
+                    str(
+                        int(
+                            round(
+                                float(
+                                    peso_val
+                                )
+                                * 100
+                            )
+                        )
+                    )
+                )
+
+            else:
+
+                r["peso"] = "24"
+
+            r = r.to_dict()
+
+            # -------------------------------------------------
+            # RIMOZIONE COLONNE TECNICHE
+            # -------------------------------------------------
+
+            for col in [
+                "_price",
+                "_supplier",
+                "_original_sku",
+                "status",
+                "stock_trend"
+            ]:
+
+                r.pop(
+                    col,
+                    None
+                )
+
+            writer.writerow(
+                r
+            )
 
     print(
-        f"📝 Feed aggiornato: {OUTPUT_FILE}"
+        f"\n📝 Feed generato: {OUTPUT_FILE}"
     )
 
+
+# =========================================================
+# AVVIO
+# =========================================================
 
 if __name__ == "__main__":
     main()
