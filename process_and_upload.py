@@ -29,11 +29,11 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "origin storage",
     "integral",
     "coreparts",
-    "InLine"
-    "battery"
-    "Fellowes"
-    "ricambio"
-    "Delock"
+    "inline",
+    "battery",
+    "fellowes",
+    "ricambio",
+    "delock",
 }
 
 EXCLUDE_CAT2_SUBSTRINGS = {
@@ -63,7 +63,7 @@ EXCLUDE_CAT3_SUBSTRINGS = {
 }
 
 # Per "Cavi E Accessori" vengono mantenute SOLO queste marche
-ALLOWED_BRANDS_CAT2 = {
+ALLOWED_BRANDS_CAT3 = {
     "cavi e accessori": {
         "adata",
         "asrock",
@@ -301,13 +301,13 @@ def main():
             # -------------------------------------------------
             # CAVI E ACCESSORI
             #
-            # Se cat2 = "Cavi E Accessori",
+            # Se cat3 = "Cavi E Accessori",
             # vengono mantenute SOLO le marche autorizzate.
             # -------------------------------------------------
 
-            if cat2 in ALLOWED_BRANDS_CAT2:
+            if cat3 in ALLOWED_BRANDS_CAT3:
 
-                if marca not in ALLOWED_BRANDS_CAT2[cat2]:
+                if marca not in ALLOWED_BRANDS_CAT3[cat3]:
                     continue
 
             # -------------------------------------------------
