@@ -29,6 +29,7 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "origin storage",
     "integral",
     "coreparts",
+    "InLine"
 }
 
 EXCLUDE_CAT2_SUBSTRINGS = {
