@@ -36,6 +36,20 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "delock",
 }
 
+# Marche da escludere sempre, indipendentemente dalla categoria
+EXCLUDE_BRANDS = {
+    "bluelan",
+    "blueoptics",
+    "cables direct",
+    "dynamic alliances",
+    "efb-elektronik",
+    "it-budget",
+    "microconnect",
+    "nobo",
+    "pdt",
+    "one for all",
+}
+
 EXCLUDE_CAT2_SUBSTRINGS = {
     "consumabili",
     "audio",
@@ -255,6 +269,9 @@ def main():
                 r.get("marca") or ""
             )
 
+            if marca in EXCLUDE_BRANDS:
+                continue
+            
             titolo = norm(
                 r.get("titolo_prodotto")
                 or r.get("nome")
