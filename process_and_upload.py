@@ -736,6 +736,9 @@ def main():
                 for k in fields
             }
 
+            row["titolo_prodotto"] = row["titolo_prodotto"][:199]
+            row["descrizione_prodotto"] = row["descrizione_prodotto"][:399]
+            
             row["quantita"] = qty
 
             row["_original_sku"] = sku
