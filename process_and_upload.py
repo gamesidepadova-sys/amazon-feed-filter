@@ -32,6 +32,7 @@ EXCLUDE_TITLE_SUBSTRINGS = {
     "InLine"
     "battery"
     "Fellowes"
+    "ricambio"
 }
 
 EXCLUDE_CAT2_SUBSTRINGS = {
