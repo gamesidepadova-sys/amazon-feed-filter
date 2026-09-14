@@ -53,7 +53,7 @@ jobs:
       # 🔎 DEBUG ENCODING
       - name: Debug encoding feed
         run: |
-          python3 -c "data=open('feed_poleepo.csv','rb').read(); print('Primi byte:', data[:100]); text=data.decode('utf-8'); print('UTF-8 valido: SI'); [print('RIGA EAN 0000002020006:', line) for line in text.splitlines() if '0000002020006' in line]"
+          python3 -c "import requests; u='http://listini.sellrapido.com/wh/_export_easytechonline_it.csv'; r=requests.get(u); r.raise_for_status(); print('Content-Type:', r.headers.get('Content-Type')); print('Encoding dichiarato:', r.encoding); print('Primi byte:', r.content[:100]); text=r.content.decode('utf-8-sig',errors='replace'); print('UTF-8 decode OK'); [print('TROVATO:', line) for line in text.splitlines() if '2020006' in line or 'AXX1300TCRPS' in line]"
 
       # 7️⃣ Upload su Google Drive (solo se il file è cambiato)
       - name: Upload feed to Google Drive
