@@ -22,7 +22,6 @@ os.makedirs(DAILY_DIR, exist_ok=True)
 
 ALLOWED_SUPPLIERS = {
     "0429",
-    "0432",
     "0433",
     "0434",
     "0435",
