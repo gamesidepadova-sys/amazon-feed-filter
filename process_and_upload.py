@@ -43,6 +43,7 @@ ALLOWED_CAT1 = {
 
 EXCLUDE_TITLE_SUBSTRINGS = {
     "phs-memory",
+    "AppleCare",
     "montatura",
     "blueoptics",
     "origin storage",
