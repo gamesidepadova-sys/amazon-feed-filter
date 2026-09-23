@@ -509,6 +509,8 @@ def main():
         errors="replace"
     )
 
+    csv.field_size_limit(10_000_000)
+    
     reader = csv.DictReader(
         io.StringIO(text),
         delimiter="|"
